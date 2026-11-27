@@ -1,0 +1,18 @@
+# 依存・ビルド成果物
+node_modules/
+dist/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# テストの出力先 (CAD_OUT)
+cad-out/
+out/
+*.log
+
+# 一時ファイル・配布用
+*.bundle
+.DS_Store

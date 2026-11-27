@@ -1,0 +1,19 @@
+{
+  "name": "text-cad",
+  "version": "0.1.0",
+  "private": true,
+  "description": "書式付きテキスト(YAML)から 2D/3D CAD・図面・STEP/STL/IFC/DXF を生成するブラウザアプリ",
+  "license": "MIT",
+  "scripts": {
+    "build": "python3 build.py",
+    "test": "bash tests/run_all.sh"
+  },
+  "dependencies": {
+    "@jscad/modeling": "2.12.3",
+    "js-yaml": "4.1.0",
+    "three": "0.149.0"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

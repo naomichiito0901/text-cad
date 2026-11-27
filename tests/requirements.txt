@@ -1,0 +1,5 @@
+# 出力ファイルの検証用 (STEP を OpenCASCADE で読み直す、DXF/IFC の検査など)
+cadquery-ocp==8.0.1.1.0
+ezdxf==1.4.5
+ifcopenshell==0.9.0.post1
+numpy==2.5.5

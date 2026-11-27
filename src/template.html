@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>テキスト → CAD</title>
+<style>
+:root {
+  --bg: #f1f5f9; --panel: #ffffff; --ink: #0f172a; --muted: #64748b; --line: #dbe3ec;
+  --accent: #2563eb; --accent-ink: #ffffff; --err-bg: #fef2f2; --err-ink: #b91c1c; --err-line: #fecaca;
+  --ok: #15803d; --ok-bg: #dcfce7; --ng: #b91c1c; --ng-bg: #fee2e2; --warn: #b45309; --warn-bg: #fef3c7; --info-bg: #e0f2fe; --info: #0369a1;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 14px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+  display: flex; flex-direction: column;
+}
+header {
+  display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+  padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
+.group { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.group button { border: 0; border-radius: 0; border-right: 1px solid var(--line); }
+.group button:last-child { border-right: 0; }
+button {
+  font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  padding: 5px 12px; border-radius: 8px; cursor: pointer;
+}
+button:hover:not(:disabled) { background: #eef2f7; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+button[aria-pressed="true"]:hover:not(:disabled) { background: #1d4ed8; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.primary:hover:not(:disabled) { background: #1d4ed8; }
+[hidden] { display: none !important; }
+.spacer { flex: 1; }
+input[type=text] { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+
+#steps { display: flex; gap: 6px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; }
+#steps button { display: flex; align-items: center; gap: 6px; white-space: nowrap; padding: 5px 12px; }
+#steps .no { width: 20px; height: 20px; border-radius: 50%; background: #e2e8f0; display: inline-grid; place-items: center; font-size: 12px; font-weight: 600; }
+#steps .mark { min-width: 14px; font-weight: 700; }
+#steps button[data-st="ok"] .mark { color: var(--ok); }
+#steps button[data-st="ng"] .mark { color: var(--ng); }
+#steps button[data-st="wait"] .mark { color: var(--warn); }
+#steps button[aria-current="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+#steps button[aria-current="true"]:hover { background: #1d4ed8; }
+#steps button[aria-current="true"] .no { background: rgba(255,255,255,.25); }
+#steps button[aria-current="true"] .mark { color: #fff; }
+
+main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(320px, 36%) 1fr; gap: 12px; padding: 12px; }
+.editor-col, .preview { min-height: 0; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.col-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+.col-head button { padding: 2px 10px; font-size: 12px; }
+textarea {
+  flex: 1; min-height: 140px; width: 100%; border: 0; resize: none; padding: 10px 12px;
+  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono CJK JP", monospace;
+  color: var(--ink); background: #fbfdff; tab-size: 2; white-space: pre; overflow: auto;
+}
+#error {
+  margin: 0; padding: 8px 12px; background: var(--err-bg); color: var(--err-ink);
+  border-top: 1px solid var(--err-line); font-size: 13px; white-space: pre-wrap;
+}
+details { border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); max-height: 34%; overflow: auto; }
+summary { padding: 6px 12px; cursor: pointer; }
+#help { margin: 0; padding: 0 12px 10px; font: 12px/1.6 ui-monospace, Menlo, Consolas, "Noto Sans Mono CJK JP", monospace; white-space: pre-wrap; color: #334155; }
+.stage { position: relative; flex: 1; min-height: 0; background: #f8fafc; overflow: hidden; }
+#svg2d, #canvas3d { width: 100%; height: 100%; display: block; }
+.stage > * { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#svg2d, #canvas3d { cursor: grab; touch-action: none; }
+#svg2d.grab, #canvas3d.grab { cursor: grabbing; }
+.preview.stale .stage { opacity: .45; }
+.hint { padding: 5px 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
+
+#resultbar { border-top: 1px solid var(--line); max-height: 30%; overflow: auto; padding: 6px 12px; font-size: 13px; }
+.res { padding: 2px 0; }
+.muted { color: var(--muted); }
+.warn-text { color: var(--warn); }
+.panel { overflow: auto; padding: 14px 18px; background: var(--panel); }
+.panel h2 { font-size: 16px; margin: 0 0 6px; }
+.panel h3 { font-size: 14px; margin: 18px 0 6px; }
+code { background: #eef2f7; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+table.grid { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.grid th, table.grid td { border-bottom: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; }
+table.grid thead th { color: var(--muted); font-weight: 500; font-size: 12px; }
+table.grid tbody th { width: 28%; font-weight: 500; color: #334155; }
+td.c { width: 56px; } td.id { width: 44px; color: var(--muted); font-size: 12px; }
+.detail { color: var(--muted); font-size: 12px; margin-top: 2px; }
+tr.row-error td { background: #fff7f7; } tr.row-warn td { background: #fffbeb; }
+.chip { display: inline-block; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.chip.ok { background: var(--ok-bg); color: var(--ok); } .chip.ng { background: var(--ng-bg); color: var(--ng); }
+.chip.warn { background: var(--warn-bg); color: var(--warn); } .chip.info { background: var(--info-bg); color: var(--info); }
+.tag { font-size: 11px; padding: 0 6px; border: 1px solid #94a3b8; border-radius: 4px; color: #475569; }
+.tag.soft { border-color: var(--line); color: var(--muted); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; align-items: center; }
+.actions input[type=text] { flex: 1; min-width: 180px; }
+.approve { margin-top: 18px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.approve.ok { background: var(--ok-bg); border-color: #86efac; }
+.approve label { display: flex; gap: 8px; align-items: center; }
+.approve p { margin: 0; }
+@media (max-width: 800px) {
+  main { grid-template-columns: 1fr; grid-template-rows: minmax(260px, 45%) minmax(380px, 1fr); overflow: auto; }
+}
+dialog#about { width: min(720px, 92vw); max-height: 80vh; border: 1px solid #b8c0cc; border-radius: 8px; padding: 16px; }
+dialog#about pre { max-height: 52vh; overflow: auto; font-size: 11px; white-space: pre-wrap; background: #f6f8fa; padding: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>テキスト → CAD</h1>
+  <div class="group" role="group" aria-label="分野">
+    <button data-domain="mechanical" aria-pressed="true">機械部品</button>
+    <button data-domain="architecture" aria-pressed="false">建築</button>
+    <button data-domain="electrical" aria-pressed="false">電気回路</button>
+  </div>
+  <div class="group" id="mode-group" role="group" aria-label="表示">
+    <button data-mode="2d" aria-pressed="false">2D</button>
+    <button data-mode="3d" aria-pressed="true">3D</button>
+  </div>
+  <span class="spacer"></span>
+  <button id="dl-dxf" class="primary" hidden>DXFをダウンロード</button>
+  <button id="dl-svg" hidden>SVG</button>
+  <button id="dl-print" hidden>印刷 / PDF</button>
+  <button id="dl-step" class="primary" hidden>STEPをダウンロード</button>
+  <button id="dl-ifc" class="primary" hidden>IFCをダウンロード</button>
+  <button id="dl-stl" hidden>STL</button>
+  <button id="proj-save" title="入力・版・承認をファイルに保存">案件を保存</button>
+  <button id="proj-open">案件を開く</button>
+  <input id="proj-file" type="file" accept=".json,application/json" hidden>
+  <button id="about-open" title="ライセンス・第三者ソフトウェア">情報</button>
+</header>
+<dialog id="about">
+  <h2>情報</h2>
+  <p>テキスト → CAD。入力した内容はブラウザの中だけで処理され、外部には送信されません。</p>
+  <pre id="about-text"></pre>
+  <form method="dialog"><button>閉じる</button></form>
+</dialog>
+<nav id="steps" aria-label="作業工程">
+  <button data-step="1"><span class="no">1</span>要件確認<span class="mark"></span></button>
+  <button data-step="2"><span class="no">2</span>モデリング<span class="mark"></span></button>
+  <button data-step="3"><span class="no">3</span>干渉チェック<span class="mark"></span></button>
+  <button data-step="4"><span class="no">4</span>図面化<span class="mark"></span></button>
+  <button data-step="5"><span class="no">5</span>検図<span class="mark"></span></button>
+  <button data-step="6"><span class="no">6</span>納品・改訂<span class="mark"></span></button>
+</nav>
+<main>
+  <section class="editor-col" aria-label="入力">
+    <div class="col-head"><span>入力 (YAML 形式)</span><span class="spacer"></span><button id="load-holes" title="ねじ穴・斜め穴・長穴の例を読み込む">穴サンプル</button><button id="load-feat" title="角R・座ぐり・皿穴・止まり穴・面取りの例を読み込む">形状サンプル</button><button id="load-asm" title="部品定義・配置・部品表の例を読み込む">組立サンプル</button><button id="reset-text" title="この分野のサンプルに戻す">サンプルに戻す</button></div>
+    <textarea id="editor" spellcheck="false" autocomplete="off" aria-label="図面定義テキスト"></textarea>
+    <p id="error" role="alert" hidden></p>
+    <details open><summary>書式メモ</summary><pre id="help"></pre></details>
+  </section>
+  <section class="preview" aria-label="プレビュー">
+    <div class="col-head"><span id="status">-</span><span class="spacer"></span><button id="reset-view">表示リセット</button></div>
+    <div class="stage">
+      <div id="wrap2d" hidden><svg id="svg2d" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"></svg></div>
+      <div id="wrap3d" hidden><canvas id="canvas3d"></canvas></div>
+      <div id="panel" class="panel" hidden></div>
+    </div>
+    <div id="resultbar" hidden></div>
+    <div class="hint"><span>2D: ホイール=拡大縮小 / ドラッグ=移動 / ダブルクリック=全体表示</span><span>3D: ドラッグ=回転 / 右ドラッグ・Shift+ドラッグ=移動 / ホイール=拡大縮小</span></div>
+  </section>
+</main>
+<script type="text/plain" id="licenses-text">/*__LICENSES__*/</script>
+<script>/*__JSYAML__*/</script>
+<script>/*__THREE__*/</script>
+<script>/*__JSCAD__*/</script>
+<script>/*__APP__*/</script>
+</body>
+</html>
