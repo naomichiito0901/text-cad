@@ -21,8 +21,8 @@ const isWebglMsg = (t) => /WebGL/i.test(String(t));
 //  - goto のあと、計算エンジンの読み込み (ready / error) を待つ
 //  - waitForTimeout のあと、干渉の計算 (非同期) の完了を待つ。 画面の更新が非同期になっても、
 //    固定の待ち時間で判定している既存のテストが不安定にならないようにするため
-function patchPage(page, helpers) {
-  if (ignoreWebgl) {
+function patchPage(page, helpers, strict) {
+  if (ignoreWebgl && !strict) {
     const on = page.on.bind(page);
     page.on = (ev, h) => {
       if (ev === 'console') return on(ev, (m) => { if (m.type() === 'error' && isWebglMsg(m.text())) return; h(m); });
@@ -46,18 +46,27 @@ function patchPage(page, helpers) {
   return page;
 }
 
-function patchBrowser(b, helpers) {
+function patchBrowser(b, helpers, noWebgl) {
   const newContext = b.newContext.bind(b);
   b.newContext = async (...a) => {
     const c = await newContext(...a);
+    // noWebgl: WebGL を使えない環境を、どのブラウザでも再現する (getContext('webgl') が null を返す)。
+    // WebGL のエラーも見逃さないよう、Firefox の WebGL エラーの無視は止める (strict)
+    if (noWebgl) {
+      await c.addInitScript(() => {
+        const orig = HTMLCanvasElement.prototype.getContext;
+        HTMLCanvasElement.prototype.getContext = function (type, ...rest) { return /webgl/i.test(String(type)) ? null : orig.call(this, type, ...rest); };
+      });
+    }
     const newPage = c.newPage.bind(c);
-    c.newPage = async (...x) => patchPage(await newPage(...x), helpers);
+    c.newPage = async (...x) => patchPage(await newPage(...x), helpers, noWebgl);
     return c;
   };
   const newPage = b.newPage.bind(b);
-  b.newPage = async (...a) => patchPage(await newPage(...a), helpers);
+  b.newPage = async (...a) => patchPage(await newPage(...a), helpers, noWebgl);
   return b;
 }
 
 exports.name = name;
-exports.launch = async ({ waitKernel = true } = {}) => patchBrowser(await pw[name].launch(opts), waitKernel);
+// NO_WEBGL=1 で、全テストを WebGL の無い環境で実行する (GPU の無い CI の Firefox と同じ状況の再現)
+exports.launch = async ({ waitKernel = true, noWebgl = false } = {}) => patchBrowser(await pw[name].launch(opts), waitKernel, noWebgl || !!process.env.NO_WEBGL);

@@ -39,6 +39,8 @@ STEP は OpenCascade の書き出し(AP242)で、日本語の名前は `\X2\…\
 `main` への push で、GitHub Actions (`.github/workflows/pages.yml`) が「ビルド → 全テスト(Chromium・Firefox・WebKit)→ Pages へ公開」を自動で実行します。テストが 1 つでも失敗すると公開されません。
 初回のみ、リポジトリの Settings → Pages → Source を「GitHub Actions」にしてください。
 
+依存の取得(`npm ci`・`pip install`・Playwright のブラウザ)は、配布元の一時的な障害(apt の 403 など)で止まらないよう、最大 3 回まで再試行します(`tools/retry.sh`)。ブラウザの導入では、テストに不要な Microsoft の apt ソース(packages.microsoft.com)も除きます(`tools/ci-install-browser.sh`)。**テストの実行は再試行しません**。テストが本当に失敗したときは、そのまま失敗にして、公開しません。
+
 ## ライセンス
 
 - 本体: MIT (`LICENSE`)。
@@ -74,7 +76,7 @@ bash tests/run_all.sh
 STEP/STL/IFC/DXF の出力検証(`validate1〜4.py`)は、ブラウザに依存しないため chromium のときだけ実行します(`VALIDATE=1` で他のブラウザでも実行)。
 GitHub Actions では、3 つのブラウザで画面テストを実行します。
 
-**Firefox の制約:** GitHub Actions の Firefox は GPU が無く、ソフトウェア描画の設定でも WebGL を作れません。そのため Firefox の回では、WebGL 作成失敗のエラー(メッセージに `WebGL` を含むもの)だけを無視します。3D 表示そのものは Chromium(ソフトウェア描画)と WebKit で検証し、Firefox では図面・検図・出力など WebGL に依らない部分を検証します。無視せずに実行するには `STRICT_WEBGL=1` を付けます。
+**Firefox・WebGL:** GitHub Actions の Firefox は GPU が無く、WebGL を作れません。そのため Firefox の回では、WebGL 作成失敗のエラー(メッセージに `WebGL` を含むもの)だけを無視します(無視せずに実行するには `STRICT_WEBGL=1`。全テストを WebGL の無い環境で実行するには `NO_WEBGL=1`)。3D 表示そのものは Chromium(ソフトウェア描画)と WebKit で検証します。WebGL が使えない環境での動作(案内の表示、図面・検図・承認・出力・納品が使えること)は、`getContext('webgl')` を無効にして再現する `test21.js` で、3 つのブラウザとも確認します。
 
 ```bash
 BROWSER=firefox bash tests/run_all.sh
@@ -122,6 +124,8 @@ done
 | test19.js | 計算エンジンの STEP・STL を全ケース(形状ケースとサンプル)で書き出す。画面の STEP・STL ダウンロードがカーネル出力であること、計算エンジンが使えないとき(STEP は作れない・STL は旧方式・納品 zip は止まる)の挙動を確認 |
 | validate6.py | test19 の出力を OpenCascade で読み直し、有効性・立体数・面数・体積・表面積・STL の水密性を一覧にし、理論式(体積・表面積)と照合 |
 | test20.js | 干渉チェック(計算エンジンの共通部分の体積)を、手計算できる重なりの体積(箱どうし・ピンと穴・円柱の交わり・座ぐりのボルトなど)と照合。画面(工程 3)が同じ結果を使うことも確認 |
+| test21.js | WebGL が使えない環境(`getContext('webgl')` を無効にして再現)で、3D 表示の案内(使えるものが分かる文言)・STEP/STL 出力・干渉結果・図面・検図と承認・納品 zip・建築の IFC が使えること。コンソールのエラーも許さない |
+| ci-scripts.test.sh | CI の補助スクリプト(`tools/retry.sh`、`tools/ci-install-browser.sh`)の確認。偽の `npx` で、一時的な失敗は再試行して成功し、最後まで失敗すれば失敗になること、Microsoft の apt ソースだけを除くことを確かめる |
 | validate4.py | 納品 zip 内の DXF (audit)・STEP (有効性・体積)・IFC (要素数)・LICENSES.txt の同梱を検査 |
 
 ### 合格基準

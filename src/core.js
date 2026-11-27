@@ -908,7 +908,16 @@ svg.addEventListener('dblclick', () => { if (cur && cur.kind === '2d') fit2d(cur
  * ===================================================================== */
 const canvas = document.getElementById('canvas3d');
 const V = { r: null, scene: null, cam: null, grp: null, az: -0.9, el: 0.5, dist: 100, tgt: null, ok: false };
+// WebGL が使えるか。 使えない環境では THREE.WebGLRenderer がコンソールにエラーを出すので、先に確かめて作らない
+let glProbe = null;
+function webglAvailable() {
+  if (glProbe === null) {
+    try { const c = document.createElement('canvas'); glProbe = !!(c.getContext('webgl2') || c.getContext('webgl')); } catch (e) { glProbe = false; }
+  }
+  return glProbe;
+}
 function init3d() {
+  if (!webglAvailable()) return false;
   try {
     V.r = new THREE.WebGLRenderer({ canvas, antialias: true });
   } catch (e) { return false; }
