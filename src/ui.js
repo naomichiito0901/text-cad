@@ -762,5 +762,5 @@ window.__cad = {
   run, goStep, kernelExport, interferenceFor, floatingParts,
   // 干渉の計算が終わるまで待つ (テスト用)
   settled: async () => { for (let i = 0; i < 2000 && wf && ((wf.interference && wf.interference.state === 'pending') || (wf.drawings && wf.drawings.some((x) => x.d.state === 'pending'))); i++) await new Promise((r) => setTimeout(r, 30)); }, kernelModelOf, get cur() { return cur; }, get wf() { return wf; }, store, toDXF, toSTL, makeZip,
-  parseMech, solidsOf, buildDrawing, sectionGroups, sectionFor, buildSectionDrawing, collinearReduce, parseSections, jscad: jscadModeling, build3dMech, conformPolys, buildScene, jsyaml,
+  parseMech, solidsOf, buildDrawing, sectionFor, buildSectionDrawing, collinearReduce, parseSections, jscad: jscadModeling, build3dMech, conformPolys, buildScene, jsyaml,
 };

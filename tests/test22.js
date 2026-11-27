@@ -7,7 +7,7 @@
 const { launch } = require('./browser');
 const fs = require('fs');
 const path = require('path');
-const { fusion, interference } = require('./cases');
+const { fusion, interference, boltAsm } = require('./cases');
 
 const S = path.join(process.env.CAD_OUT || '/tmp/cad-out', '/');
 fs.mkdirSync(S, { recursive: true });
@@ -44,7 +44,7 @@ fs.mkdirSync(S, { recursive: true });
     const solids = out.parts.reduce((t, x) => t + x.solids, 0);
     check(`融合 ${k}: 部品 ${out.parts.length} / 立体 ${solids}`, out.parts.length === c.parts && solids === c.solids);
     check(`融合 ${k}: 離れた立体の警告 (W23)`, out.w23 && out.w23.ok === !c.warn, out.w23 && !out.w23.ok ? `(${out.w23.detail})` : '');
-    if (c.warn) check(`融合 ${k}: 警告の文言`, /部品「a\+b」に離れた立体があります/.test(out.w23.detail));
+    if (c.warn) check(`融合 ${k}: 警告の文言`, /部品「形状」に離れた立体があります/.test(out.w23.detail));
   }
 
   /* ---- 2. 干渉チェックの結果が変わらない ---- */
@@ -52,10 +52,11 @@ fs.mkdirSync(S, { recursive: true });
     await setYaml(interference[k]);
     const r = await p.evaluate(async () => {
       const wf = window.__cad.wf, model = window.__cad.kernelModelOf(wf.solids), names = wf.solids.map((s) => s.name);
+      const label = (i) => model[i].part; // 部品の表示名 (部品の title と配置の id。 単品は案件の title)
       const bySolid = await window.__cad.kernel.call('interfere', { model });
       const byPart = await window.__cad.kernel.call('interfere', { model, byPart: true });
       const tot = {};
-      for (const h of bySolid.hits) { const key = [names[h.i].split('/')[0], names[h.j].split('/')[0]].join('|'); tot[key] = (tot[key] || 0) + h.volume; }
+      for (const h of bySolid.hits) { const key = [label(h.i), label(h.j)].join('|'); tot[key] = (tot[key] || 0) + h.volume; }
       const part = {};
       for (const h of byPart.hits) part[`${h.a}|${h.b}`] = h.volume;
       return { tot, part, ui: wf.interference.hits.length };
@@ -69,9 +70,16 @@ fs.mkdirSync(S, { recursive: true });
   await setYaml(fusion.disjoint);
   await p.click('[data-step="5"]'); await p.waitForTimeout(500);
   const p5 = (await p.textContent('#panel')) || '';
-  check('検図: 離れた立体の警告が出る (承認の妨げにならない)', /部品「a\+b」に離れた立体があります/.test(p5));
+  check('検図: 離れた立体の警告が出る (承認の妨げにならない)', /部品「形状」に離れた立体があります/.test(p5));
   await p.fill('#appr-name', '検図者A'); if (await p.$('#appr-ack')) await p.check('#appr-ack');
   check('検図: 警告だけなら承認できる', !(await p.isDisabled('[data-act="approve"]')));
+
+  // 組立: 部品の名前は、YAML の部品の title と配置の id (立体名の連結ではない)
+  await setYaml({ yaml: boltAsm(10.5).replace('      - box: {name: body, size: [40, 40, 12]}\n', '      - box: {name: body, size: [40, 40, 12]}\n      - box: {name: lug, size: [10, 10, 5], at: [60, 0, 0]}\n') });
+  const aw = await p.evaluate(() => { const r = window.__cad.wf.rules.find((x) => x.id === 'W23'); return r ? r.detail : ''; });
+  check('組立: 警告の部品名は「title (配置の id)」', /部品「プレート \(P1\)」に離れた立体があります/.test(aw) && !/body|lug|\+/.test(aw), `(${aw})`);
+  const asmStep = await p.evaluate(async () => (await window.__cad.kernelExport(window.__cad.wf, 'x.step')).step);
+  check('組立: STEP の部品名も title と配置の id', /PRODUCT\('(\\X2\\[0-9A-F]+\\X0\\)*[^']*'/.test(asmStep) && /\\X2\\30D730EC30FC30C8\\X0\\ \(P1\)/.test(asmStep.replace(/\s+/g, ' ')), '');
 
   /* ---- 4. step_format ---- */
   await setYaml({ yaml: null });
@@ -117,7 +125,7 @@ fs.mkdirSync(S, { recursive: true });
   p.once('download', () => { got = true; });
   await p.click('[data-act="f-exp"][data-id="step"]'); await p.waitForTimeout(1200);
   const stepErr = (await p.textContent('#error')) || '';
-  check('融合に失敗: STEP は出ず、部品名つきで理由が出る', !got && /STEP\) を作れません/.test(stepErr) && /部品「base\+boss」の立体を融合できませんでした/.test(stepErr), `(${stepErr.slice(0, 90)})`);
+  check('融合に失敗: STEP は出ず、部品名つきで理由が出る', !got && /STEP\) を作れません/.test(stepErr) && /部品「ベースプレート」の立体を融合できませんでした/.test(stepErr), `(${stepErr.slice(0, 90)})`);
   const stl = await dl('[data-act="f-exp"][data-id="stl"]');
   const stlErr = (await p.textContent('#error')) || '';
   check('融合に失敗: STL は旧方式で出て、理由も出る', /^solid /.test(stl) && /融合できませんでした/.test(stlErr));
