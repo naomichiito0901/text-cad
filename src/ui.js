@@ -266,19 +266,21 @@ function buildMechWF(spec, scene) {
   const interference = interferenceFor(solids, () => { if (wf && wf.ikey === ikey) run(); });
   const revRows = revRowsOf(project);
   const secs = parseSections(spec, solids);
+  const onViews = () => { if (wf && wf.ikey === ikey) run(); };
+  const useViews = !window.__oldViews; // 新旧の比較用 (旧処理を消すときに外す)
   const onSection = () => { if (wf && wf.ikey === ikey) run(); };
   let drawings, bom = null, mechs;
   if (asm) {
     bom = buildBOM(asm);
     const balloons = asm.defs.map((d) => ({ n: d.n, names: solids.filter((o) => asm.insts.some((i) => i.part === d.key && i.id === o.inst)).map((o) => o.name) }));
-    drawings = [{ key: 'asm', label: '組立図', suffix: '_asm', d: buildDrawing(solids, project, revRows, { bom, balloons, cuts: secs }) }];
+    drawings = [{ key: 'asm', label: '組立図', suffix: '_asm', d: buildDrawing(solids, project, revRows, { bom, balloons, cuts: secs, views: useViews ? viewsFor(solids, onViews) : undefined }) }];
     asm.defs.forEach((def) => {
       const pj = { ...project, title: def.title, material: def.material, drawing_no: def.drawing_no || `${project.drawing_no}-${def.n}` };
-      drawings.push({ key: def.key, label: `部品図 ${def.n}: ${def.title}`, suffix: `_part${def.n}-${def.key}`, d: buildDrawing(solidsOf(def.mech), pj, revRows) });
+      drawings.push({ key: def.key, label: `部品図 ${def.n}: ${def.title}`, suffix: `_part${def.n}-${def.key}`, d: buildDrawing(solidsOf(def.mech), pj, revRows, { views: useViews ? viewsFor(solidsOf(def.mech), onViews) : undefined }) });
     });
     mechs = asm.defs.map((d) => d.mech);
   } else {
-    drawings = [{ key: 'main', label: '図面', suffix: '', d: buildDrawing(solids, project, revRows, { cuts: secs }) }];
+    drawings = [{ key: 'main', label: '図面', suffix: '', d: buildDrawing(solids, project, revRows, { cuts: secs, views: useViews ? viewsFor(solids, onViews) : undefined }) }];
     mechs = [mech];
   }
   secs.forEach((sec) => drawings.push({ key: `sec${sec.label}`, label: `断面図 ${sec.label}-${sec.label}`, suffix: `_sec${sec.label}`, d: buildSectionDrawing(solids, project, revRows, sec, !!asm, sectionFor(solids, sec, onSection)) }));

@@ -347,6 +347,7 @@ function buildDrawing(S, proj, revRows, opts = {}) {
     }
     if (h.depth != null) { const l = pts[pts.length - 1]; LNu(V.map(uc - l.r, l.z), V.map(uc + l.r, l.z), 'HIDDEN'); }
   };
+  const geoStart = prims.length; // これ以降が、三面図の形の線 (計算エンジンの隠れ線処理で置き換える範囲)
   S.forEach((o) => {
     if (o.kind === 'box') {
       profile(VIEWS.front, o, o.x0, o.x1, o.z0, o.z1, o.ct, o.cb);
@@ -414,6 +415,32 @@ function buildDrawing(S, proj, revRows, opts = {}) {
       cl(RX(o.cy), RZ(o.z0) - ext, RX(o.cy), RZ(o.z1) + ext);
     }
   });
+
+  // 三面図の形の線を、計算エンジンの隠れ線処理の結果 (見える線・隠れ線) に置き換える
+  const vw = opts.views;
+  if (vw) {
+    const keep = prims.slice(geoStart).filter((q) => q.layer !== 'OUTLINE' && q.layer !== 'HIDDEN');
+    prims.length = geoStart; prims.push(...keep); seen.clear();
+    if (vw.state === 'done') {
+      Object.entries(VIEWS).forEach(([name, V]) => {
+        const put = (list, layer) => list.forEach((e) => {
+          const m = (pt) => V.map(pt[0], pt[1]);
+          if (e.k === 'line') LNu(m(e.a), m(e.b), layer);
+          else if (e.k === 'circle') prims.push({ t: 'circle', c: m(e.c), r: e.r * s, layer });
+          else if (e.k === 'arc') prims.push({ t: 'arc', c: m(e.c), r: e.r * s, a0: e.a0, a1: e.a1, layer });
+          else e.pts.forEach((q, i) => { if (i) LNu(m(e.pts[i - 1]), m(q), layer); });
+        });
+        put(vw.edges[name].visible, 'OUTLINE'); put(vw.edges[name].hidden, 'HIDDEN');
+      });
+      S.forEach((o) => o.kind === 'box' && o.holes.forEach((h) => { // ねじの谷(呼び径)の隠れ線: ねじ深さまで (形ではなく、ねじの表記)
+        if (!h.thread) return;
+        const zt = h.thread.depth != null ? o.z1 - h.thread.depth : (h.depth != null ? o.z1 - h.depth : o.z0), rr = h.thread.D / 2;
+        [[VIEWS.front, h.x], [VIEWS.right, h.y]].forEach(([V, uc]) => [-1, 1].forEach((sg) => LNu(V.map(uc + sg * rr, o.z1), V.map(uc + sg * rr, zt), 'HIDDEN')));
+      }));
+    } else {
+      T(vw.state === 'pending' ? '三面図の線を計算中です (計算エンジンの読み込みが終わるまでお待ちください)' : '計算エンジンが使えないため、三面図の線を描けません (ページを読み込み直してください)', (fl + fr) / 2, fb + TBH + 12, 4.5, { layer: 'TEXT' });
+    }
+  }
 
   if (opts.cuts && opts.cuts.length) drawCutLines(prims, opts.cuts, TX, TY, xmin, xmax, ymin, ymax);
 
@@ -584,7 +611,7 @@ function buildDrawing(S, proj, revRows, opts = {}) {
   sheetDecor(prims, { proj, revRows, scaleStr: scaleText(s), asm, labels: { material: '材質', kind: ['投影法', '第三角法'] } });
 
   if (!auto) T('※ 寸法は未記入です (dimensions: none)', fx, fy - 10, 3.6, { anchor: 'start' });
-  return { prims, scale: s, fits: fitsSheet, need: [...need], have: [...have], paper: proj.paper, roughness: rough_provided, bbox: { W, D, H }, title: proj.title, drawing_no: proj.drawing_no };
+  return { prims, scale: s, fits: fitsSheet, need: [...need], have: [...have], paper: proj.paper, roughness: rough_provided, bbox: { W, D, H }, title: proj.title, drawing_no: proj.drawing_no, ...(vw ? { state: vw.state } : {}) };
 }
 
 /* ---------- 組立: 部品表・すきま ---------- */

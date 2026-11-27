@@ -146,6 +146,119 @@ function isValid(shape) {
   return new oc.BRepCheck_Analyzer(shape.wrapped, true, false).IsValid();
 }
 
+// 投影した辺を、図面用のデータにする (直線 / 円 / 円弧 / その他は折れ線)。 曲線が円弧にぴったり合うときは、円弧にする (円筒の丸みの輪郭など)
+function edgeData(e) {
+  const P = (t) => { const v = e.pointAt(t); return [v.x, v.y]; };
+  const a = P(0), b = P(1), m = P(0.5), len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const type = e.geomType;
+  if (type === 'LINE') return len > 1e-9 ? { k: 'line', a, b } : null;
+  const closed = len < 1e-6, three = closed ? [a, P(0.25), m] : [a, m, b];
+  const [[x1, y1], [x2, y2], [x3, y3]] = three, d = 2 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2));
+  if (Math.abs(d) > 1e-9) {
+    const ux = ((x1 * x1 + y1 * y1) * (y2 - y3) + (x2 * x2 + y2 * y2) * (y3 - y1) + (x3 * x3 + y3 * y3) * (y1 - y2)) / d;
+    const uy = ((x1 * x1 + y1 * y1) * (x3 - x2) + (x2 * x2 + y2 * y2) * (x1 - x3) + (x3 * x3 + y3 * y3) * (x2 - x1)) / d;
+    const r = Math.hypot(x1 - ux, y1 - uy);
+    if (r < 1e5 && [0.1, 0.2, 0.35, 0.65, 0.8, 0.9].every((t) => { const q = P(t); return Math.abs(Math.hypot(q[0] - ux, q[1] - uy) - r) < 1e-6 * Math.max(1, r); })) {
+      if (closed) return { k: 'circle', c: [ux, uy], r };
+      const ang = (p) => Math.atan2(p[1] - uy, p[0] - ux) * 180 / Math.PI, wrap = (x) => ((x + 540) % 360) - 180;
+      const A0 = ang(a), Am = ang(m), A1 = ang(b), ccw = wrap(Am - A0) + wrap(A1 - Am) > 0;
+      const [s0, s1] = ccw ? [A0, A1] : [A1, A0];
+      const sweep = ((s1 - s0) % 360 + 360) % 360 || 360, n0 = wrap(s0); // 始まりの角度は -180〜180 度、終わりは始まりから反時計回りに
+      return { k: 'arc', c: [ux, uy], r, a0: n0, a1: n0 + sweep };
+    }
+  }
+  const n = 48;
+  return { k: 'poly', type, pts: Array.from({ length: n + 1 }, (_, i) => P(i / n)) };
+}
+
+// 投影した線の整理: (1) 真横から見た円などが作る、往復する曲線を 1 本の線にする (2) 重なる直線をまとめる
+// (3) 見える線と重なる隠れ線を除く (見える線を優先する。 裏の面の辺が表の辺と重なる場合など)
+function normalizeView(v) {
+  const R4 = (x) => Math.round(x * 1e4) / 1e4;
+  const collapse = (e) => {
+    if (e.k !== 'poly') return e;
+    const [p0] = e.pts, q = e.pts.find((p) => Math.hypot(p[0] - p0[0], p[1] - p0[1]) > 1e-9);
+    if (!q) return null;
+    const L = Math.hypot(q[0] - p0[0], q[1] - p0[1]), d = [(q[0] - p0[0]) / L, (q[1] - p0[1]) / L];
+    if (!e.pts.every((p) => Math.abs((p[0] - p0[0]) * d[1] - (p[1] - p0[1]) * d[0]) < 1e-6)) return e;
+    const ts = e.pts.map((p) => (p[0] - p0[0]) * d[0] + (p[1] - p0[1]) * d[1]), a = Math.min(...ts), b = Math.max(...ts);
+    return b - a < 1e-9 ? null : { k: 'line', a: [p0[0] + d[0] * a, p0[1] + d[1] * a], b: [p0[0] + d[0] * b, p0[1] + d[1] * b] };
+  };
+  const lineKey = (e) => {
+    let dx = e.b[0] - e.a[0], dy = e.b[1] - e.a[1]; const L = Math.hypot(dx, dy); dx /= L; dy /= L;
+    if (dx < -1e-9 || (Math.abs(dx) <= 1e-9 && dy < 0)) { dx = -dx; dy = -dy; }
+    return { key: `${R4(Math.atan2(dy, dx))}:${R4(-dy * e.a[0] + dx * e.a[1])}`, d: [dx, dy], t: [e.a[0] * dx + e.a[1] * dy, e.b[0] * dx + e.b[1] * dy].sort((p, q) => p - q) };
+  };
+  const mergeIv = (iv) => { iv.sort((p, q) => p[0] - q[0]); const o = []; iv.forEach((q) => { if (o.length && q[0] <= o[o.length - 1][1] + 1e-7) o[o.length - 1][1] = Math.max(o[o.length - 1][1], q[1]); else o.push(q.slice()); }); return o; };
+  const subIv = (iv, cut) => { let cur = iv; cut.forEach(([a, b]) => { const nx = []; cur.forEach(([p0, p1]) => { if (b <= p0 + 1e-7 || a >= p1 - 1e-7) nx.push([p0, p1]); else { if (a > p0 + 1e-7) nx.push([p0, a]); if (b < p1 - 1e-7) nx.push([b, p1]); } }); cur = nx; }); return cur; };
+  const group = (list) => { // 直線: 同じ直線上の区間にまとめる
+    const g = new Map(), rest = [];
+    list.map(collapse).filter(Boolean).forEach((e) => {
+      if (e.k !== 'line') { rest.push(e); return; }
+      const { key, d, t } = lineKey(e);
+      if (!g.has(key)) g.set(key, { d, o: e.a, iv: [] });
+      g.get(key).iv.push(t);
+    });
+    g.forEach((x) => { x.iv = mergeIv(x.iv); });
+    return { g, rest };
+  };
+  const vis = group(v.visible), hid = group(v.hidden);
+  const lines = (G, cutBy) => {
+    const out = [];
+    G.g.forEach((x, key) => {
+      const cut = cutBy && cutBy.g.get(key) ? cutBy.g.get(key).iv : [];
+      subIv(x.iv, cut).forEach(([a, b]) => { if (b - a > 1e-6) { const t0 = x.o[0] * x.d[0] + x.o[1] * x.d[1]; out.push({ k: 'line', a: [x.o[0] + x.d[0] * (a - t0), x.o[1] + x.d[1] * (a - t0)], b: [x.o[0] + x.d[0] * (b - t0), x.o[1] + x.d[1] * (b - t0)] }); } });
+    });
+    return out;
+  };
+  const sig = (e) => (e.k === 'circle' ? `c${R4(e.c[0])},${R4(e.c[1])},${R4(e.r)}` : e.k === 'arc' ? `a${R4(e.c[0])},${R4(e.c[1])},${R4(e.r)},${R4(e.a0)},${R4(e.a1)}` : `p${R4(e.pts[0][0])},${R4(e.pts[0][1])},${R4(e.pts[24][0])},${R4(e.pts[24][1])},${R4(e.pts[48][0])},${R4(e.pts[48][1])}`);
+  const uniq = (list, drop) => { const seen = new Set(drop || []); return list.filter((e) => { const k = sig(e); if (seen.has(k)) return false; seen.add(k); return true; }); };
+  const visCurves = uniq(vis.rest);
+  return { visible: [...lines(vis), ...visCurves], hidden: [...lines(hid, vis), ...uniq(hid.rest, visCurves.map(sig))] };
+}
+
+// 面どうしの境目の線のうち、図面に描かない線を集める: (1) 円筒などの継ぎ目 (seam: 1 つの面の両側になる辺) と
+// (2) なめらかにつながる面の境目 (接線の辺。 スロットの端の円筒と平らな壁の境目など)。
+// ただし、その位置の面が視線と直角 (= 輪郭線になる) ときは、その線は輪郭として必要なので除かない。
+// 戻り値: 視線方向 (dir) ごとの、線 (3 次元の折れ線) の一覧
+function interiorEdges(shapes, dirs) {
+  const buckets = new Map();
+  shapes.forEach((sh) => sh.faces.forEach((f) => f.edges.forEach((e) => {
+    const h = e.hashCode; if (!buckets.has(h)) buckets.set(h, []);
+    const b = buckets.get(h); let rec = b.find((r) => r.edge.isSame(e));
+    if (!rec) { rec = { edge: e, faces: [] }; b.push(rec); }
+    rec.faces.push(f);
+  })));
+  const out = {};
+  Object.keys(dirs).forEach((k) => { out[k] = []; });
+  buckets.forEach((b) => b.forEach(({ edge, faces }) => {
+    if (faces.length > 2) return;
+    const m = edge.pointAt(0.5), unit = (v) => { const L = Math.hypot(v.x, v.y, v.z) || 1; return { x: v.x / L, y: v.y / L, z: v.z / L }; };
+    const n1 = unit(faces[0].normalAt([m.x, m.y, m.z]));
+    let smooth = faces.length === 1 || faces[0].isSame(faces[1]); // 同じ面が両側にある = 継ぎ目
+    if (!smooth) { const n2 = unit(faces[1].normalAt([m.x, m.y, m.z])); smooth = Math.abs(n1.x * n2.x + n1.y * n2.y + n1.z * n2.z) > 0.9995; }
+    if (globalThis.__dbgEdges) (globalThis.__dbgEdges.push({ n: faces.length, smooth, m: [m.x, m.y, m.z].map((x) => +x.toFixed(2)), n1: [n1.x, n1.y, n1.z].map((x) => +x.toFixed(2)), t: faces.map((f) => f.geomType) }));
+    if (!smooth) return;
+    const pts = Array.from({ length: 129 }, (_, i) => { const v = edge.pointAt(i / 128); return [v.x, v.y, v.z]; });
+    // 線に沿って面の向きが変わる (円の境目など) ので、いくつかの点で調べ、どこか 1 点でも視線と直角でなければ、線は輪郭ではない
+    const ns = [0.1, 0.3, 0.5, 0.7, 0.9].map((t) => { const q = edge.pointAt(t); return unit(faces[0].normalAt([q.x, q.y, q.z])); });
+    Object.entries(dirs).forEach(([k, d]) => { if (ns.some((n) => Math.abs(n.x * d[0] + n.y * d[1] + n.z * d[2]) > 0.05)) out[k].push(pts); });
+  }));
+  return out;
+}
+// 投影した線のうち、interiorEdges と重なる線 (輪郭線として出たものは除く) を取り除く。 proj: 3 次元の点 → 図面の座標
+function dropInterior(raw, polys) {
+  const near = (p, q0, q1) => { const dx = q1[0] - q0[0], dy = q1[1] - q0[1], L2 = dx * dx + dy * dy; let t = L2 ? ((p[0] - q0[0]) * dx + (p[1] - q0[1]) * dy) / L2 : 0; t = Math.max(0, Math.min(1, t)); return Math.hypot(p[0] - q0[0] - dx * t, p[1] - q0[1] - dy * t) < 0.01; };
+  const onPoly = (pl, p) => pl.some((q, i) => i && near(p, pl[i - 1], q));
+  const onArc = (e, t) => { // 円・円弧の上の点 (t: 0〜1)
+    let a1 = e.k === 'circle' ? 360 : e.a1, a0 = e.k === 'circle' ? 0 : e.a0; while (a1 <= a0) a1 += 360;
+    const ang = (a0 + (a1 - a0) * t) * Math.PI / 180; return [e.c[0] + e.r * Math.cos(ang), e.c[1] + e.r * Math.sin(ang)];
+  };
+  const samples = (e) => (e.k === 'line' ? [0, 0.25, 0.5, 0.75, 1].map((t) => [e.a[0] + (e.b[0] - e.a[0]) * t, e.a[1] + (e.b[1] - e.a[1]) * t]) : e.k === 'poly' ? [0, 12, 24, 36, 48].map((i) => e.pts[i]) : [0, 0.2, 0.4, 0.6, 0.8, 1].map((t) => onArc(e, t)));
+  const keep = (e) => { if (e.s === 'O') return true; const sm = samples(e); return !sm || !polys.some((pl) => sm.every((p) => onPoly(pl, p))); }; // 全部の点が、1 本の線の上にあるときだけ除く
+  return { visible: raw.visible.filter(keep), hidden: raw.hidden.filter(keep), __filtered: true };
+}
+
 // ---- 操作 (ops) ----------------------------------------------------------------
 const ops = {
   // 干渉: 部品どうしの共通部分の体積。 同じ部品 (inst が同じ) の立体どうしは調べない。
@@ -218,6 +331,39 @@ const ops = {
       groups.push({ key: p.key, name: p.name, faces: out, area: out.reduce((t, f) => t + f.area, 0) });
     }
     return { groups };
+  },
+  // 三面図 (隠れ線処理): 全部品 (融合した形) をまとめて、正面 (-y 側から) / 上面 (+z 側から) / 右側面 (+x 側から) の
+  // 見える線と隠れ線を求める。 座標は図面の向き (正面: 横 x・縦 z / 上面: 横 x・縦 y / 右側面: 横 y・縦 z)。
+  // 各線: { k: 'line'|'circle'|'arc'|'poly', ... }。 接線の線 (面取りでない丸みの境目) は含めない。
+  async views({ model }) {
+    const shapes = model.map(makeSolid);
+    const fused = fuseParts(model, shapes);
+    const cams = { front: [[0, -1, 0], [1, 0, 0]], top: [[0, 0, 1], [1, 0, 0]], right: [[1, 0, 0], [0, 1, 0]] };
+    const out = {};
+    const to2 = { front: (v) => [v[0], v[2]], top: (v) => [v[0], v[1]], right: (v) => [v[1], v[2]] };
+    if (model.dbg) globalThis.__dbgEdges = [];
+    const di = interiorEdges(fused.map((p) => p.shape), Object.fromEntries(Object.entries(cams).map(([k, [d]]) => [k, d])));
+    const drops = Object.fromEntries(Object.entries(di).map(([k, list]) => [k, list.map((pl) => pl.map(to2[k]))]));
+    for (const [name, [dir, xAxis]] of Object.entries(cams)) {
+      const camera = new R.ProjectionCamera([0, 0, 0], dir, xAxis);
+      // HLR は渡した形を使い切らないが、念のため部品ごとに複製してまとめる
+      const compound = R.compoundShapes(fused.map((p) => p.shape.clone()));
+      const oc = R.getOC(), res = new oc.HLRBRep_Algo();
+      res.Add(compound.wrapped, 0);
+      const proj = new oc.HLRAlgo_Projector(camera.wrapped);
+      res.Projector(proj); res.Update(); res.Hide();
+      const h = new oc.HLRBRep_HLRToShape(res);
+      const edgesOf = (sh) => (sh.IsNull() ? [] : R.cast(sh).edges);
+      const lists = { visible: [...edgesOf(h.VCompound()).map((e) => ((e.__s = 'V'), e)), ...edgesOf(h.Rg1LineVCompound()).map((e) => ((e.__s = 'R'), e)), ...edgesOf(h.OutLineVCompound()).map((e) => ((e.__s = 'O'), e))], hidden: [...edgesOf(h.HCompound()).map((e) => ((e.__s = 'V'), e)), ...edgesOf(h.Rg1LineHCompound()).map((e) => ((e.__s = 'R'), e)), ...edgesOf(h.OutLineHCompound()).map((e) => ((e.__s = 'O'), e))] };
+      const raw = {};
+      for (const [cls, edges] of Object.entries(lists)) {
+        edges.forEach((e) => oc.BRepLib.BuildCurves3d(e.wrapped));
+        raw[cls] = edges.map((e) => { const d = edgeData(e); if (d) d.s = e.__s; return d; }).filter(Boolean);
+      }
+      out[name] = normalizeView(raw.__filtered ? raw : dropInterior(raw, drops[name]));
+    }
+    if (model.dbg) { out.__drops = drops; out.__edges = globalThis.__dbgEdges; }
+    return out;
   },
   // 立体の記述から、部品ごとに融合した STEP / STL と、部品ごとの体積・表面積・面の数・有効性を返す。
   // format: STEP の形式 (AP242 | AP214)。 融合の前の体積 (volumeBefore) も返す
