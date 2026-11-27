@@ -23,7 +23,7 @@ const { interference } = require('./cases');
     } else await p.fill('#editor', c.yaml);
     await p.waitForTimeout(900);
     const err = (await p.textContent('#error')) || '';
-    if (err && !/WebGL/.test(err)) { errs.push(`[${k}] ${err}`); allOk = false; continue; }
+    if (err) { errs.push(`[${k}] ${err}`); allOk = false; continue; }
     const r = await p.evaluate(async () => {
       const wf = window.__cad.wf;
       const model = window.__cad.kernelModelOf(wf.solids);
