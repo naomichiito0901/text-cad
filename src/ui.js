@@ -266,19 +266,20 @@ function buildMechWF(spec, scene) {
   const interference = interferenceFor(solids, () => { if (wf && wf.ikey === ikey) run(); });
   const revRows = revRowsOf(project);
   const secs = parseSections(spec, solids);
+  const onViews = () => { if (wf && wf.ikey === ikey) run(); };
   const onSection = () => { if (wf && wf.ikey === ikey) run(); };
   let drawings, bom = null, mechs;
   if (asm) {
     bom = buildBOM(asm);
     const balloons = asm.defs.map((d) => ({ n: d.n, names: solids.filter((o) => asm.insts.some((i) => i.part === d.key && i.id === o.inst)).map((o) => o.name) }));
-    drawings = [{ key: 'asm', label: '組立図', suffix: '_asm', d: buildDrawing(solids, project, revRows, { bom, balloons, cuts: secs }) }];
+    drawings = [{ key: 'asm', label: '組立図', suffix: '_asm', d: buildDrawing(solids, project, revRows, { bom, balloons, cuts: secs, views: viewsFor(solids, onViews) }) }];
     asm.defs.forEach((def) => {
       const pj = { ...project, title: def.title, material: def.material, drawing_no: def.drawing_no || `${project.drawing_no}-${def.n}` };
-      drawings.push({ key: def.key, label: `部品図 ${def.n}: ${def.title}`, suffix: `_part${def.n}-${def.key}`, d: buildDrawing(solidsOf(def.mech), pj, revRows) });
+      drawings.push({ key: def.key, label: `部品図 ${def.n}: ${def.title}`, suffix: `_part${def.n}-${def.key}`, d: buildDrawing(solidsOf(def.mech), pj, revRows, { views: viewsFor(solidsOf(def.mech), onViews) }) });
     });
     mechs = asm.defs.map((d) => d.mech);
   } else {
-    drawings = [{ key: 'main', label: '図面', suffix: '', d: buildDrawing(solids, project, revRows, { cuts: secs }) }];
+    drawings = [{ key: 'main', label: '図面', suffix: '', d: buildDrawing(solids, project, revRows, { cuts: secs, views: viewsFor(solids, onViews) }) }];
     mechs = [mech];
   }
   secs.forEach((sec) => drawings.push({ key: `sec${sec.label}`, label: `断面図 ${sec.label}-${sec.label}`, suffix: `_sec${sec.label}`, d: buildSectionDrawing(solids, project, revRows, sec, !!asm, sectionFor(solids, sec, onSection)) }));
@@ -616,18 +617,24 @@ function printSheet(d) {
   doc.close();
   setTimeout(() => { f.contentWindow.focus(); f.contentWindow.print(); setTimeout(() => f.remove(), 2000); }, 300);
 }
+// 三面図・断面図の線が計算中・作れないときは、不完全な図面を出力しない
+function notReady(d) {
+  if (!d || !d.state || d.state === 'done') return false;
+  setError(d.state === 'pending' ? '三面図・断面図の線を計算中です。 少し待ってから、もう一度押してください' : '計算エンジンが使えないため、この図面は出力できません (ページを読み込み直してください)');
+  return true;
+}
 const inFlow = () => !!wf && WF_DOMAINS.has(curDomain);
 const modelName = () => (inFlow() ? nameBase() : `${cur.domain}-${cur.mode}`);
 $('dl-dxf').addEventListener('click', () => {
-  if (!cur || cur.kind !== '2d') return;
+  if (!cur || cur.kind !== '2d' || notReady(cur.dw && cur.dw.d)) return;
   saveText(modelName() + (cur.dw ? cur.dw.suffix : '') + '.dxf', toDXF(cur.prims), 'application/dxf');
 });
 $('dl-svg').addEventListener('click', () => {
-  if (!cur || cur.kind !== '2d') return;
+  if (!cur || cur.kind !== '2d' || notReady(cur.dw && cur.dw.d)) return;
   if (inFlow() && step === 4) saveText(modelName() + (cur.dw ? cur.dw.suffix : '') + '.svg', sheetSVG(cur.dw ? cur.dw.d : wf.drawing), 'image/svg+xml');
   else saveText(modelName() + '.svg', toSVGFile(cur.prims), 'image/svg+xml');
 });
-$('dl-print').addEventListener('click', () => wf && printSheet(cur && cur.dw ? cur.dw.d : wf.drawing));
+$('dl-print').addEventListener('click', () => { const d = wf && (cur && cur.dw ? cur.dw.d : wf.drawing); if (d && !notReady(d)) printSheet(d); });
 // 出力の中身を作る。 3D モデル (STEP / STL) は計算エンジンで作る (読み込み中は待つ)。
 // 計算エンジンが使えないとき、STL は旧実装 (JSCAD のメッシュ) で作る。 STEP は作れないので null を返す
 async function exportData(x) {
@@ -711,9 +718,9 @@ panel.addEventListener('click', async (e) => {
     store.pendingNote = note; store.approval = null;
     flash = `版を ${nr} に改訂しました。内容を修正して再度検図してください`;
     run();
-  } else if (act === 'f-dxf') { const dw = wf.drawings[+t.dataset.i]; saveText(`${nameBase()}${dw.suffix}.dxf`, toDXF(dw.d.prims), 'application/dxf'); }
-  else if (act === 'f-svg') { const dw = wf.drawings[+t.dataset.i]; saveText(`${nameBase()}${dw.suffix}.svg`, sheetSVG(dw.d), 'image/svg+xml'); }
-  else if (act === 'f-print') printSheet(wf.drawings[+t.dataset.i].d);
+  } else if (act === 'f-dxf') { const dw = wf.drawings[+t.dataset.i]; if (notReady(dw.d)) return; saveText(`${nameBase()}${dw.suffix}.dxf`, toDXF(dw.d.prims), 'application/dxf'); }
+  else if (act === 'f-svg') { const dw = wf.drawings[+t.dataset.i]; if (notReady(dw.d)) return; saveText(`${nameBase()}${dw.suffix}.svg`, sheetSVG(dw.d), 'image/svg+xml'); }
+  else if (act === 'f-print') { const dd = wf.drawings[+t.dataset.i].d; if (!notReady(dd)) printSheet(dd); }
   else if (act === 'f-exp') saveExport(t.dataset.id);
 });
 

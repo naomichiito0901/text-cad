@@ -142,7 +142,7 @@ const { cases, samples, interference } = require('./cases');
   check('計算エンジンなし: 断面図が unavailable になり、案内が図面に出る', un.length >= 1 && un.every((x) => x.state === 'unavailable' && /断面図を作れません/.test(x.texts)), JSON.stringify(un[0]).slice(0, 120));
   await q.click('[data-step="5"]'); await q.waitForTimeout(400);
   await q.fill('#appr-name', '検図者A');
-  check('計算エンジンなし: 検図 E06 で止まり、承認できない', (await q.isDisabled('[data-act="approve"]')) && /断面図が作成できている/.test((await q.textContent('#panel')) || ''));
+  check('計算エンジンなし: 検図 E06 で止まり、承認できない', (await q.isDisabled('[data-act="approve"]')) && /断面図・三面図が作成できている/.test((await q.textContent('#panel')) || ''));
   check('計算エンジンなし: ページのエラーなし', qerrs.length === 0, qerrs.join(' / '));
 
   console.log('ERRORS', errs);

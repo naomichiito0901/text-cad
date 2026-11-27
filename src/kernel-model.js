@@ -94,3 +94,17 @@ function sectionFor(solids, sec, onDone) {
   }
   return e;
 }
+
+// 三面図の線 (見える線・隠れ線): 計算エンジンの隠れ線処理で、全部品 (融合した形) をまとめて求める (非同期)。 断面・干渉と同じ仕組み
+const viewsCache = new Map();
+function viewsFor(solids, onDone) {
+  const key = interferenceKey(solids);
+  let e = viewsCache.get(key);
+  if (!e) {
+    e = { state: 'pending', edges: null };
+    if (viewsCache.size > 16) viewsCache.delete(viewsCache.keys().next().value);
+    viewsCache.set(key, e);
+    Kernel.call('views', { model: JSON.parse(key) }).then((r) => { e.edges = r; e.state = 'done'; }, () => { e.state = 'unavailable'; }).then(() => onDone && onDone());
+  }
+  return e;
+}
