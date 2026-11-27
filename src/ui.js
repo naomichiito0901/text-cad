@@ -398,7 +398,17 @@ function view2d(prims, id) {
   lastView = id;
 }
 function view3d(meshes, id, hot) {
-  if (!V.ok && !init3d()) { setError('このブラウザでは WebGL が使えないため 3D 表示できません (2D は利用できます)'); showPanels('panel'); panel.innerHTML = '<p class="muted">3D 表示には WebGL が必要です。</p>'; return false; }
+  if (!V.ok && !init3d()) {
+    // WebGL が使えない環境。 3D の表示だけができない (それ以外は使える) ことを、案内として出す
+    showPanels('panel');
+    panel.innerHTML = `<div class="notice"><h3>この環境では 3D 表示ができません</h3>
+      <p>WebGL が使えないため、<b>3D の表示だけ</b>できません。 それ以外は、そのまま使えます:</p>
+      <ul><li>図面・寸法の確認 (工程 4)、検図と承認 (工程 5)、納品 zip (工程 6)</li>
+      <li>STEP / STL / DXF / IFC の出力 (上のボタン、または工程 6)</li>
+      <li>干渉チェックの結果 (工程 3 の下の欄)、2D 表示 (<code>mode: 2d</code>)</li></ul>
+      <p><button data-goto="4">図面を見る (工程 4)</button> <button data-goto="5">検図へ (工程 5)</button> <button data-goto="6">納品へ (工程 6)</button></p></div>`;
+    return false;
+  }
   showPanels('3d');
   show3d(meshes, fitNext || lastView !== id, hot);
   lastView = id;
@@ -483,9 +493,11 @@ function present() {
       const b = bounds2d(cur.prims);
       statusEl.textContent = `${cur.note} / 図形 ${cur.prims.length} 個 / 範囲 ${fmt(b.x1 - b.x0)} × ${fmt(b.y1 - b.y0)}`;
       setButtons(['dl-dxf', 'dl-svg']);
-    } else if (view3d(cur.meshes, 'x3d')) {
-      const s = bbox3.getSize(new THREE.Vector3());
-      statusEl.textContent = `立体 / 部品 ${cur.meshes.length} 個 / 範囲 ${fmt(s.x)} × ${fmt(s.y)} × ${fmt(s.z)}`;
+    } else {
+      if (view3d(cur.meshes, 'x3d')) {
+        const s = bbox3.getSize(new THREE.Vector3());
+        statusEl.textContent = `立体 / 部品 ${cur.meshes.length} 個 / 範囲 ${fmt(s.x)} × ${fmt(s.y)} × ${fmt(s.z)}`;
+      } else statusEl.textContent = `立体 / 部品 ${cur.meshes.length} 個 / 3D 表示なし (WebGL が使えません)`;
       setButtons(['dl-stl']);
     }
     setTabs(); fitNext = false;
@@ -493,19 +505,18 @@ function present() {
   }
   if (step === 2) {
     if (cur.kind === '2d') { view2d(cur.prims, 'plan2d'); statusEl.textContent = wf.status2d(bounds2d(cur.prims)); setButtons(wf.btn.m2); }
-    else if (view3d(wf.meshes, 'model')) { statusEl.textContent = wf.status3d; setButtons(wf.btn.m3); }
+    else { const gl = view3d(wf.meshes, 'model'); statusEl.textContent = wf.status3d + (gl ? '' : ' / 3D 表示なし (WebGL が使えません)'); setButtons(wf.btn.m3); }
   } else if (step === 3) {
     const S3 = wf.step3, bad = S3.items.filter((i) => i.sev === 'error').length, wait = S3.items.some((i) => i.sev === 'wait');
     const warns = S3.items.filter((i) => i.sev === 'warn').length;
-    if (view3d(wf.meshes, 'model', S3.hot)) {
-      statusEl.textContent = bad ? `${S3.label} ${bad} 件 (赤で表示)` : wait ? `${S3.label} 確認中…` : warns ? `警告 ${warns} 件` : `${S3.label}なし`;
-      setButtons(wf.btn.m3);
-      resultbar.hidden = false;
-      const chip = (i) => (i.sev === 'error' ? `<span class="chip ng">${S3.label}</span>` : i.sev === 'wait' ? '<span class="chip warn">確認中</span>' : '<span class="chip warn">警告</span>');
-      resultbar.innerHTML = S3.items.map((i) => `<div class="res">${chip(i)} ${E(i.text)}</div>`).join('')
-        + (!bad && !wait ? `<div class="res"><span class="chip ok">✓ ${S3.label}なし</span> ${E(S3.okText)}</div>` : '')
-        + `<div class="res muted">${E(S3.note)}</div>`;
-    }
+    const gl = view3d(wf.meshes, 'model', S3.hot); // WebGL が使えなくても、結果 (下の欄) とボタンは出す
+    statusEl.textContent = (bad ? `${S3.label} ${bad} 件${gl ? ' (赤で表示)' : ''}` : wait ? `${S3.label} 確認中…` : warns ? `警告 ${warns} 件` : `${S3.label}なし`) + (gl ? '' : ' / 3D 表示なし (WebGL が使えません)');
+    setButtons(wf.btn.m3);
+    resultbar.hidden = false;
+    const chip = (i) => (i.sev === 'error' ? `<span class="chip ng">${S3.label}</span>` : i.sev === 'wait' ? '<span class="chip warn">確認中</span>' : '<span class="chip warn">警告</span>');
+    resultbar.innerHTML = S3.items.map((i) => `<div class="res">${chip(i)} ${E(i.text)}</div>`).join('')
+      + (!bad && !wait ? `<div class="res"><span class="chip ok">✓ ${S3.label}なし</span> ${E(S3.okText)}</div>` : '')
+      + `<div class="res muted">${E(S3.note)}</div>`;
   } else if (step === 4) {
     if (dwgIdx >= wf.drawings.length) dwgIdx = 0;
     const dw = wf.drawings[dwgIdx], dd = dw.d;
