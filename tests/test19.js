@@ -48,10 +48,16 @@ fs.mkdirSync(S, { recursive: true });
   }
   console.log(summary.join('\n'));
 
-  // 画面の操作でも、計算エンジンの STEP / STL が出ること (読み込み済みの状態)
+  // 画面の操作でも、計算エンジンの STEP / STL が出ること (読み込み済みの状態)。
+  // ヘッダのボタンが無い (WebGL が使えず 3D 表示が中止される) ときは、工程 6 のパネルの同じ出力ボタンを使う
   await p.fill('#editor', cases.cbore); await p.waitForTimeout(900);
-  const [d1] = await Promise.all([p.waitForEvent('download'), p.click('#dl-step')]);
-  const [d2] = await Promise.all([p.waitForEvent('download'), p.click('#dl-stl')]);
+  let stepBtn = '#dl-step', stlBtn = '#dl-stl';
+  if (!(await p.isVisible('#dl-step'))) {
+    await p.click('[data-step="6"]'); await p.waitForTimeout(500);
+    stepBtn = '[data-act="f-exp"][data-id="step"]'; stlBtn = '[data-act="f-exp"][data-id="stl"]';
+  }
+  const [d1] = await Promise.all([p.waitForEvent('download', { timeout: 30000 }), p.click(stepBtn)]);
+  const [d2] = await Promise.all([p.waitForEvent('download', { timeout: 30000 }), p.click(stlBtn)]);
   const stepTxt = fs.readFileSync(await d1.path(), 'utf8'), stlTxt = fs.readFileSync(await d2.path(), 'utf8');
   const ui = { stepKernel: /FILE_NAME\('[^']*','[^']*',\('[^']*'\),\(''\),'cad-text','cad-text \(OpenCascade\)'/.test(stepTxt), stepAscii: !/[^\x00-\x7f]/.test(stepTxt), stlSolid: /^solid /.test(stlTxt) };
   console.log('ui download:', JSON.stringify(ui));
