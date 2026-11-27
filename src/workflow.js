@@ -267,179 +267,73 @@ function buildDrawing(S, proj, revRows, opts = {}) {
   RECT(0, 0, SW, SH, 'TBLOCK');
   RECT(fl, fb, fr, ft, 'FRAME');
 
-  /* 投影図: 手前の部品に隠れる線は隠れ線(破線)にする */
+  /* 投影図: 見える線・隠れ線の形は、計算エンジンの隠れ線処理 (OpenCascade の HLR) で求める (kernel-model.js の viewsFor)。
+     ここでは、図面の座標への変換と、形ではない線 (中心線・ねじの表記) を描く */
   const VIEWS = {
-    front: { U: (o) => [o.x0, o.x1], V: (o) => [o.z0, o.z1], near: (B, A) => B.y0 < A.y0 - eps, map: (u, v) => [FX(u), FY(v)], disc: false },
-    top: { U: (o) => [o.x0, o.x1], V: (o) => [o.y0, o.y1], near: (B, A) => B.z1 > A.z1 + eps, map: (u, v) => [TX(u), TY(v)], disc: true },
-    right: { U: (o) => [o.y0, o.y1], V: (o) => [o.z0, o.z1], near: (B, A) => B.x1 > A.x1 + eps, map: (u, v) => [RX(u), RZ(v)], disc: false },
-  };
-  const inside = (V, B, u, v) => {
-    if (V.disc && B.kind === 'cyl') return Math.hypot(u - B.cx, v - B.cy) < B.r - eps;
-    const [u0, u1] = V.U(B), [v0, v1] = V.V(B);
-    return u > u0 + eps && u < u1 - eps && v > v0 + eps && v < v1 - eps;
-  };
-  const cross = (V, B, horiz, c, lo, hi) => {
-    const out = [];
-    if (V.disc && B.kind === 'cyl') {
-      const d = horiz ? c - B.cy : c - B.cx;
-      if (Math.abs(d) < B.r) { const h = Math.sqrt(B.r * B.r - d * d), m = horiz ? B.cx : B.cy; out.push(m - h, m + h); }
-    } else {
-      const [u0, u1] = V.U(B), [v0, v1] = V.V(B);
-      if (horiz) { if (c > v0 + eps && c < v1 - eps) out.push(u0, u1); }
-      else if (c > u0 + eps && c < u1 - eps) out.push(v0, v1);
-    }
-    return out.filter((x) => x > lo + eps && x < hi - eps);
+    front: { map: (u, v) => [FX(u), FY(v)] },
+    top: { map: (u, v) => [TX(u), TY(v)] },
+    right: { map: (u, v) => [RX(u), RZ(v)] },
   };
   const seen = new Set();
   const LNu = (pa, pb, layer) => {
     const key = [layer, ...[pa, pb].map((t) => t.map((x) => x.toFixed(3)).join(',')).sort()].join('|');
     if (!seen.has(key)) { seen.add(key); LN(pa, pb, layer); }
   };
-  const edge = (V, A, u1, v1, u2, v2) => {
-    const horiz = Math.abs(v1 - v2) < eps;
-    const lo = horiz ? Math.min(u1, u2) : Math.min(v1, v2), hi = horiz ? Math.max(u1, u2) : Math.max(v1, v2), c = horiz ? v1 : u1;
-    const occ = S.filter((B) => B !== A && V.near(B, A));
-    const bp = [lo, hi];
-    occ.forEach((B) => bp.push(...cross(V, B, horiz, c, lo, hi)));
-    bp.sort((p, q) => p - q);
-    for (let i = 0; i < bp.length - 1; i++) {
-      const a = bp[i], b = bp[i + 1];
-      if (b - a < eps) continue;
-      const mid = (a + b) / 2, hid = occ.some((B) => inside(V, B, horiz ? mid : c, horiz ? c : mid));
-      LNu(V.map(...(horiz ? [a, c] : [c, a])), V.map(...(horiz ? [b, c] : [c, b])), hid ? 'HIDDEN' : 'OUTLINE');
-    }
-  };
-  const rectEdges = (V, A) => {
-    const [u0, u1] = V.U(A), [v0, v1] = V.V(A);
-    edge(V, A, u0, v0, u1, v0); edge(V, A, u1, v0, u1, v1); edge(V, A, u1, v1, u0, v1); edge(V, A, u0, v1, u0, v0);
-  };
-  const circleTop = (A, cx, cy, r) => {
-    const V = VIEWS.top, occ = S.filter((B) => B !== A && V.near(B, A));
-    const pts = [[cx + r, cy], [cx - r, cy], [cx, cy + r], [cx, cy - r]];
-    const hid = occ.some((B) => pts.every(([u, v]) => inside(V, B, u, v)));
-    prims.push({ t: 'circle', c: [TX(cx), TY(cy)], r: r * s, layer: hid ? 'HIDDEN' : 'OUTLINE' });
-  };
   const cl = (x0, y0, x1, y1) => LN([x0, y0], [x1, y1], 'CENTER');
   const ext = 3;
-  const dline = (V, u0, v0, u1, v1, layer) => LNu(V.map(u0, v0), V.map(u1, v1), layer || 'OUTLINE');
-  // 正面・側面の外形。面取りがあれば斜めの辺と、面取りの境界線も描く
-  const profile = (V, A, u0, u1, v0, v1, ct, cb, ft = 0, fb = 0) => {
-    if (!ct && !cb && !ft && !fb) { rectEdges(V, A); return; }
-    const tt = ct || ft, bb = cb || fb;
-    edge(V, A, u0 + bb, v0, u1 - bb, v0); edge(V, A, u0 + tt, v1, u1 - tt, v1);
-    edge(V, A, u0, v0 + bb, u0, v1 - tt); edge(V, A, u1, v0 + bb, u1, v1 - tt);
-    const arc = (cu, cv, R, a0, a1) => { const c = V.map(cu, cv); prims.push({ t: 'arc', c, r: R * s, a0, a1, layer: 'OUTLINE' }); };
-    if (ft) { arc(u1 - ft, v1 - ft, ft, 0, 90); arc(u0 + ft, v1 - ft, ft, 90, 180); }
-    if (fb) { arc(u0 + fb, v0 + fb, fb, 180, 270); arc(u1 - fb, v0 + fb, fb, 270, 360); }
-    if (cb) { dline(V, u0, v0 + cb, u0 + cb, v0); dline(V, u1 - cb, v0, u1, v0 + cb); edge(V, A, u0, v0 + cb, u1, v0 + cb); }
-    if (ct) { dline(V, u0, v1 - ct, u0 + ct, v1); dline(V, u1 - ct, v1, u1, v1 - ct); edge(V, A, u0, v1 - ct, u1, v1 - ct); }
-  };
-  const insetRect = (o, i, layer) => {
-    const V = VIEWS.top;
-    [[o.x0 + i, o.y0 + i, o.x1 - i, o.y0 + i], [o.x1 - i, o.y0 + i, o.x1 - i, o.y1 - i], [o.x1 - i, o.y1 - i, o.x0 + i, o.y1 - i], [o.x0 + i, o.y1 - i, o.x0 + i, o.y0 + i]]
-      .forEach(([a, b, c, d]) => dline(V, a, b, c, d, layer));
-  };
-  const hiddenHole = (V, uc, h, z1, z0) => {
-    const { pts } = holeSteps(h, z1, z0);
-    for (let i = 0; i + 1 < pts.length; i++) {
-      const a = pts[i], b = pts[i + 1];
-      LNu(V.map(uc - a.r, a.z), V.map(uc - b.r, b.z), 'HIDDEN'); LNu(V.map(uc + a.r, a.z), V.map(uc + b.r, b.z), 'HIDDEN');
-    }
-    if (h.depth != null) { const l = pts[pts.length - 1]; LNu(V.map(uc - l.r, l.z), V.map(uc + l.r, l.z), 'HIDDEN'); }
-  };
-  const geoStart = prims.length; // これ以降が、三面図の形の線 (計算エンジンの隠れ線処理で置き換える範囲)
   S.forEach((o) => {
     if (o.kind === 'box') {
-      profile(VIEWS.front, o, o.x0, o.x1, o.z0, o.z1, o.ct, o.cb);
-      profile(VIEWS.right, o, o.y0, o.y1, o.z0, o.z1, o.ct, o.cb);
-      if (o.cr) {
-        const R = o.cr, V = VIEWS.top;
-        edge(V, o, o.x0 + R, o.y0, o.x1 - R, o.y0); edge(V, o, o.x1, o.y0 + R, o.x1, o.y1 - R);
-        edge(V, o, o.x1 - R, o.y1, o.x0 + R, o.y1); edge(V, o, o.x0, o.y1 - R, o.x0, o.y0 + R);
-        [[o.x1 - R, o.y0 + R, -90, 0], [o.x1 - R, o.y1 - R, 0, 90], [o.x0 + R, o.y1 - R, 90, 180], [o.x0 + R, o.y0 + R, 180, 270]]
-          .forEach(([cx, cy, a0, a1]) => prims.push({ t: 'arc', c: [TX(cx), TY(cy)], r: R * s, a0, a1, layer: 'OUTLINE' }));
-      } else rectEdges(VIEWS.top, o);
-      if (o.ct) insetRect(o, o.ct, 'OUTLINE');
-      if (o.cb) insetRect(o, o.cb, 'HIDDEN');
       o.holes.forEach((h) => {
-        const e = holeRim(h) * s + ext, H = o.z1 - o.z0;
+        const e = holeRim(h) * s + ext;
         if (h.tilt) {
-          const a = h.d / 2 / tiltC(h), rot = h.tdir[0] ? 0 : 90, sh = H * tiltT(h);
-          prims.push(...ellipseLines(TX(h.x), TY(h.y), a * s, h.d / 2 * s, rot, 'OUTLINE').map((q) => q));
-          prims.push(...ellipseLines(TX(h.x + h.tdir[0] * sh), TY(h.y + h.tdir[1] * sh), a * s, h.d / 2 * s, rot, 'HIDDEN'));
-          // 正面・側面: 傾いた穴の隠れ線と中心線
+          // 正面・側面: 傾いた穴の中心線
           [[VIEWS.front, 0, h.x], [VIEWS.right, 1, h.y]].forEach(([V, ci, c0]) => {
-            const half = h.tdir[ci] ? a : h.d / 2, t = h.tdir[ci] * tiltT(h), uc = (z) => c0 + t * (o.z1 - z);
-            [-1, 1].forEach((sg) => LNu(V.map(uc(o.z1) + sg * half, o.z1), V.map(uc(o.z0) + sg * half, o.z0), 'HIDDEN'));
-            const ee = ext / s;
+            const t = h.tdir[ci] * tiltT(h), uc = (z) => c0 + t * (o.z1 - z), ee = ext / s;
             const p0 = V.map(uc(o.z1 + ee), o.z1 + ee), p1 = V.map(uc(o.z0 - ee), o.z0 - ee);
             cl(p0[0], p0[1], p1[0], p1[1]);
           });
           cl(TX(h.x) - e, TY(h.y), TX(h.x) + e, TY(h.y)); cl(TX(h.x), TY(h.y) - e, TX(h.x), TY(h.y) + e);
           return;
         }
-        holeRadii(h).forEach((r) => circleTop(o, h.x, h.y, r));
         if (h.thread) prims.push({ t: 'arc', c: [TX(h.x), TY(h.y)], r: h.thread.D / 2 * s, a0: 0, a1: 270, layer: 'THREAD' });
         cl(TX(h.x) - e, TY(h.y), TX(h.x) + e, TY(h.y)); cl(TX(h.x), TY(h.y) - e, TX(h.x), TY(h.y) + e);
-        hiddenHole(VIEWS.front, h.x, h, o.z1, o.z0);
         cl(FX(h.x), FY(o.z0) - ext, FX(h.x), FY(o.z1) + ext);
-        hiddenHole(VIEWS.right, h.y, h, o.z1, o.z0);
         cl(RX(h.y), RZ(o.z0) - ext, RX(h.y), RZ(o.z1) + ext);
-        if (h.thread) { // ねじの谷(呼び径)の隠れ線: ねじ深さまで
-          const zt = h.thread.depth != null ? o.z1 - h.thread.depth : (h.depth != null ? o.z1 - h.depth : o.z0), rr = h.thread.D / 2;
-          [[VIEWS.front, h.x], [VIEWS.right, h.y]].forEach(([V, uc]) => [-1, 1].forEach((sg) => LNu(V.map(uc + sg * rr, o.z1), V.map(uc + sg * rr, zt), 'HIDDEN')));
-        }
       });
       o.slots.forEach((sl) => {
-        slotOutline(sl, 'OUTLINE').forEach((q) => prims.push(xfPrim(q, (pt) => [TX(pt[0]), TY(pt[1])], s)));
-        const [sa, sb] = slotSeg(sl), r = sl.w / 2, ee = ext / s;
+        const [sa, sb] = slotSeg(sl), r = sl.w / 2;
         if (sl.dir === 'x') { cl(TX(sa[0] - r) - ext, TY(sl.cy), TX(sb[0] + r) + ext, TY(sl.cy)); cl(TX(sl.cx), TY(sl.cy - r) - ext, TX(sl.cx), TY(sl.cy + r) + ext); }
         else { cl(TX(sl.cx), TY(sa[1] - r) - ext, TX(sl.cx), TY(sb[1] + r) + ext); cl(TX(sl.cx - r) - ext, TY(sl.cy), TX(sl.cx + r) + ext, TY(sl.cy)); }
-        const fu = sl.dir === 'x' ? sl.len / 2 : r, ru = sl.dir === 'x' ? r : sl.len / 2;
-        [-1, 1].forEach((sg) => {
-          LNu([FX(sl.cx + sg * fu), FY(o.z0)], [FX(sl.cx + sg * fu), FY(o.z1)], 'HIDDEN');
-          LNu([RX(sl.cy + sg * ru), RZ(o.z0)], [RX(sl.cy + sg * ru), RZ(o.z1)], 'HIDDEN');
-        });
         cl(FX(sl.cx), FY(o.z0) - ext, FX(sl.cx), FY(o.z1) + ext); cl(RX(sl.cy), RZ(o.z0) - ext, RX(sl.cy), RZ(o.z1) + ext);
-        void ee;
       });
     } else {
       const e = o.r * s + ext;
-      circleTop(o, o.cx, o.cy, o.r);
-      if (o.ct) prims.push({ t: 'circle', c: [TX(o.cx), TY(o.cy)], r: (o.r - o.ct) * s, layer: 'OUTLINE' });
-      if (o.cb) prims.push({ t: 'circle', c: [TX(o.cx), TY(o.cy)], r: (o.r - o.cb) * s, layer: 'HIDDEN' });
       cl(TX(o.cx) - e, TY(o.cy), TX(o.cx) + e, TY(o.cy)); cl(TX(o.cx), TY(o.cy) - e, TX(o.cx), TY(o.cy) + e);
-      profile(VIEWS.front, o, o.x0, o.x1, o.z0, o.z1, o.ct, o.cb, o.ft, o.fb);
-      profile(VIEWS.right, o, o.y0, o.y1, o.z0, o.z1, o.ct, o.cb, o.ft, o.fb);
       cl(FX(o.cx), FY(o.z0) - ext, FX(o.cx), FY(o.z1) + ext);
       cl(RX(o.cy), RZ(o.z0) - ext, RX(o.cy), RZ(o.z1) + ext);
     }
   });
 
-  // 三面図の形の線を、計算エンジンの隠れ線処理の結果 (見える線・隠れ線) に置き換える
-  const vw = opts.views;
-  if (vw) {
-    const keep = prims.slice(geoStart).filter((q) => q.layer !== 'OUTLINE' && q.layer !== 'HIDDEN');
-    prims.length = geoStart; prims.push(...keep); seen.clear();
-    if (vw.state === 'done') {
-      Object.entries(VIEWS).forEach(([name, V]) => {
-        const put = (list, layer) => list.forEach((e) => {
-          const m = (pt) => V.map(pt[0], pt[1]);
-          if (e.k === 'line') LNu(m(e.a), m(e.b), layer);
-          else if (e.k === 'circle') prims.push({ t: 'circle', c: m(e.c), r: e.r * s, layer });
-          else if (e.k === 'arc') prims.push({ t: 'arc', c: m(e.c), r: e.r * s, a0: e.a0, a1: e.a1, layer });
-          else e.pts.forEach((q, i) => { if (i) LNu(m(e.pts[i - 1]), m(q), layer); });
-        });
-        put(vw.edges[name].visible, 'OUTLINE'); put(vw.edges[name].hidden, 'HIDDEN');
+  // 形の線: 計算エンジンの隠れ線処理の結果 (見える線 = 実線、隠れ線 = 破線)。 求まるまでは案内だけを出す
+  const vw = opts.views || { state: 'unavailable' };
+  if (vw.state === 'done') {
+    Object.entries(VIEWS).forEach(([name, V]) => {
+      const put = (list, layer) => list.forEach((e) => {
+        const m = (pt) => V.map(pt[0], pt[1]);
+        if (e.k === 'line') LNu(m(e.a), m(e.b), layer);
+        else if (e.k === 'circle') prims.push({ t: 'circle', c: m(e.c), r: e.r * s, layer });
+        else if (e.k === 'arc') prims.push({ t: 'arc', c: m(e.c), r: e.r * s, a0: e.a0, a1: e.a1, layer });
+        else e.pts.forEach((q, i) => { if (i) LNu(m(e.pts[i - 1]), m(q), layer); });
       });
-      S.forEach((o) => o.kind === 'box' && o.holes.forEach((h) => { // ねじの谷(呼び径)の隠れ線: ねじ深さまで (形ではなく、ねじの表記)
-        if (!h.thread) return;
-        const zt = h.thread.depth != null ? o.z1 - h.thread.depth : (h.depth != null ? o.z1 - h.depth : o.z0), rr = h.thread.D / 2;
-        [[VIEWS.front, h.x], [VIEWS.right, h.y]].forEach(([V, uc]) => [-1, 1].forEach((sg) => LNu(V.map(uc + sg * rr, o.z1), V.map(uc + sg * rr, zt), 'HIDDEN')));
-      }));
-    } else {
-      T(vw.state === 'pending' ? '三面図の線を計算中です (計算エンジンの読み込みが終わるまでお待ちください)' : '計算エンジンが使えないため、三面図の線を描けません (ページを読み込み直してください)', (fl + fr) / 2, fb + TBH + 12, 4.5, { layer: 'TEXT' });
-    }
+      put(vw.edges[name].visible, 'OUTLINE'); put(vw.edges[name].hidden, 'HIDDEN');
+    });
+    S.forEach((o) => o.kind === 'box' && o.holes.forEach((h) => { // ねじの谷(呼び径)の隠れ線: ねじ深さまで (形ではなく、ねじの表記)
+      if (!h.thread) return;
+      const zt = h.thread.depth != null ? o.z1 - h.thread.depth : (h.depth != null ? o.z1 - h.depth : o.z0), rr = h.thread.D / 2;
+      [[VIEWS.front, h.x], [VIEWS.right, h.y]].forEach(([V, uc]) => [-1, 1].forEach((sg) => LNu(V.map(uc + sg * rr, o.z1), V.map(uc + sg * rr, zt), 'HIDDEN')));
+    }));
+  } else {
+    T(vw.state === 'pending' ? '三面図の線を計算中です (計算エンジンの読み込みが終わるまでお待ちください)' : '計算エンジンが使えないため、三面図の線を描けません (ページを読み込み直してください)', (fl + fr) / 2, fb + TBH + 12, 4.5, { layer: 'TEXT' });
   }
 
   if (opts.cuts && opts.cuts.length) drawCutLines(prims, opts.cuts, TX, TY, xmin, xmax, ymin, ymax);
@@ -489,6 +383,12 @@ function buildDrawing(S, proj, revRows, opts = {}) {
         obs.push({ r: [cx - 0.6, cy + r, cx + 0.6, TY(ymax) + 9 + LV * Math.max(px.length, 1)] });   // 上へ伸びる寸法補助線
         obs.push({ r: [cx + r, cy - 0.6, TX(xmax) + 9 + LV * Math.max(py.length, 1), cy + 0.6] }); // 右へ伸びる寸法補助線
       });
+      // 引出し線どうしが交差しないよう、置いた引出し線 (斜めの線と文字の下線) の線分を覚えておく
+      const segs = [];
+      const segCross = (a, b, c, d) => {
+        const o = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+        return o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0;
+      };
       const hitCount = (r, own) => obs.reduce((n, o) => n + (o.own !== own && r[0] < o.r[2] && r[2] > o.r[0] && r[1] < o.r[3] && r[3] > o.r[1] ? 1 : 0), 0);
       const lineRects = (p, q) => Array.from({ length: 9 }, (_, i) => { const t = i / 8, x = p[0] + (q[0] - p[0]) * t, y = p[1] + (q[1] - p[1]) * t; return [x - 0.7, y - 0.7, x + 0.7, y + 0.7]; });
       const plate = [TX(xmin) + 1, TY(ymin) + 1, TX(xmax) - 1, TY(ymax) - 1];
@@ -502,12 +402,14 @@ function buildDrawing(S, proj, revRows, opts = {}) {
           const rr = rpFn ? rpFn(a) : rp;
           const p0 = [cx + rr * Math.cos(a), cy + rr * Math.sin(a)], p1 = [p0[0] + dx * sx, p0[1] + dy];
           const rect = sx > 0 ? [p1[0], p1[1], p1[0] + tw, p1[1] + tH + 1.5] : [p1[0] - tw, p1[1], p1[0], p1[1] + tH + 1.5];
-          const lines = lineRects(p0, p1);
-          const score = hitCount(rect, own) * 6 + lines.reduce((n, r) => n + hitCount(r, own), 0) + (inPlate(rect) && inPlate([p1[0], p1[1], p1[0], p1[1]]) ? 0 : 40) + (Math.abs(dy) + dx) * 0.01;
-          return { sx, p0, p1, dir: [dx * sx, dy], rect, lines, score };
+          const lines = lineRects(p0, p1), mine = [[p0, p1], [p1, [p1[0] + tw * sx, p1[1]]]];
+          const crossed = mine.reduce((n, [a, b]) => n + segs.reduce((m, [c, d]) => m + (segCross(a, b, c, d) ? 1 : 0), 0), 0);
+          const score = crossed * 60 + hitCount(rect, own) * 6 + lines.reduce((n, r) => n + hitCount(r, own), 0) + (inPlate(rect) && inPlate([p1[0], p1[1], p1[0], p1[1]]) ? 0 : 40) + (Math.abs(dy) + dx) * 0.01;
+          return { sx, p0, p1, dir: [dx * sx, dy], rect, lines, mine, score };
         };
         const chosen = tries.map(place).reduce((best, t) => (t.score < best.score ? t : best));
         obs.push({ r: chosen.rect }, ...chosen.lines.map((r) => ({ r })));
+        segs.push(...chosen.mine);
         noteLeader(chosen.p0, chosen.dir, text, chosen.sx < 0);
       };
       boxes.forEach((b) => {
@@ -611,7 +513,7 @@ function buildDrawing(S, proj, revRows, opts = {}) {
   sheetDecor(prims, { proj, revRows, scaleStr: scaleText(s), asm, labels: { material: '材質', kind: ['投影法', '第三角法'] } });
 
   if (!auto) T('※ 寸法は未記入です (dimensions: none)', fx, fy - 10, 3.6, { anchor: 'start' });
-  return { prims, scale: s, fits: fitsSheet, need: [...need], have: [...have], paper: proj.paper, roughness: rough_provided, bbox: { W, D, H }, title: proj.title, drawing_no: proj.drawing_no, ...(vw ? { state: vw.state } : {}) };
+  return { prims, scale: s, fits: fitsSheet, need: [...need], have: [...have], paper: proj.paper, roughness: rough_provided, bbox: { W, D, H }, title: proj.title, drawing_no: proj.drawing_no, state: vw.state };
 }
 
 /* ---------- 組立: 部品表・すきま ---------- */
@@ -664,9 +566,9 @@ function runChecks(ctx) {
     interference.state === 'pending' ? '計算エンジンで確認中です'
       : interference.state === 'unavailable' ? '計算エンジンが使えないため確認できません'
         : interference.hits.map((h) => `${h.a} × ${h.b} (${h.volume < 10 ? h.volume.toFixed(1) : Math.round(h.volume).toLocaleString('ja-JP')} mm³)`).join(' / '));
-  // 断面図は計算エンジンで作る。 できていない図面があるうちは検図を通さない (承認できない)
+  // 断面図と三面図の線は計算エンジンで作る。 できていない図面があるうちは検図を通さない (承認できない)
   const secWait = drawings.filter((dw) => dw.d.state && dw.d.state !== 'done');
-  add('E06', '断面図が作成できている', 'error', !secWait.length,
+  add('E06', '断面図・三面図が作成できている', 'error', !secWait.length,
     secWait.map((dw) => `${dw.label}: ${dw.d.state === 'pending' ? '計算エンジンで作成中です' : '計算エンジンが使えないため作れません'}`).join(' / '));
   const nofit = drawings.filter((dw) => !dw.d.fits);
   add('E04', '図面が用紙に収まっている', 'error', !nofit.length, `${nofit.map((dw) => dw.label).join('、')}: 尺度 ${nofit[0] ? scaleText(nofit[0].d.scale) : ''} では ${P.paper} に収まりません。用紙か尺度を変更してください`);
