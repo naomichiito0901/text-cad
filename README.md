@@ -16,7 +16,7 @@ python3 build.py      # dist/index.html, dist/LICENSE, dist/THIRD_PARTY_LICENSES
 
 ## 公開 (GitHub Pages)
 
-`main` への push で、GitHub Actions (`.github/workflows/pages.yml`) が「ビルド → 全テスト → Pages へ公開」を自動で実行します。テストが 1 つでも失敗すると公開されません。
+`main` への push で、GitHub Actions (`.github/workflows/pages.yml`) が「ビルド → 全テスト(Chromium・Firefox・WebKit)→ Pages へ公開」を自動で実行します。テストが 1 つでも失敗すると公開されません。
 初回のみ、リポジトリの Settings → Pages → Source を「GitHub Actions」にしてください。
 
 ## ライセンス
@@ -27,14 +27,36 @@ python3 build.py      # dist/index.html, dist/LICENSE, dist/THIRD_PARTY_LICENSES
 
 ## テスト (tests/)
 
-画面操作テスト (Playwright / Chromium) と、出力ファイルを OpenCASCADE・ezdxf・ifcopenshell で読み直す検証から成ります。
+画面操作テスト (Playwright / Chromium・Firefox・WebKit) と、出力ファイルを OpenCASCADE・ezdxf・ifcopenshell で読み直す検証から成ります。
 **正解データのファイルは保存しません。** 検証は、理論式との比較(体積など)と、読み込みの成否で行います。
 
 ### 前提
 
-- Node.js と、`npm ci` で入る `playwright`(Chromium は `npx playwright install chromium` で取得)
-- Python 3 と `pip install -r tests/requirements.txt`(`cadquery-ocp`、`ifcopenshell`、`ezdxf`、`numpy`。venv 推奨)
+- Node.js(24 系)と、`npm ci` で入る `playwright`
+- Python 3.12 と `pip install -r tests/requirements.txt`(`cadquery-ocp`、`ifcopenshell`、`ezdxf`、`numpy`)。リポジトリ直下の `.venv` に作ると、`run_all.sh` が自動で使います
 - 先に `python3 build.py` で `dist/index.html` を作っておくこと
+
+### 手元の環境構築 (macOS / Homebrew)
+
+```bash
+brew install node python@3.12
+python3.12 -m venv .venv
+.venv/bin/pip install -r tests/requirements.txt
+npm ci
+npx playwright install chromium firefox webkit   # ブラウザ本体を取得 (初回のみ)
+python3 build.py
+bash tests/run_all.sh
+```
+
+### ブラウザの切り替え
+
+画面テストは、環境変数 `BROWSER=chromium|firefox|webkit`(既定 chromium)で切り替えます。
+STEP/STL/IFC/DXF の出力検証(`validate1〜4.py`)は、ブラウザに依存しないため chromium のときだけ実行します(`VALIDATE=1` で他のブラウザでも実行)。
+GitHub Actions では、3 つのブラウザで画面テストを実行します。
+
+```bash
+BROWSER=firefox bash tests/run_all.sh
+```
 
 ### 再実行手順
 

@@ -1,4 +1,4 @@
-const { chromium } = require('playwright');
+const { launch } = require('./browser');
 const S = require('path').join(process.env.CAD_OUT || '/tmp/cad-out', '/'); require('fs').mkdirSync(S, { recursive: true });
 const head = 'mode: 2d\ndomain: architecture\nproject: {title: 検証, drawing_no: T-1, designer: a, drafter: b, date: 2026-11-25, standard: JIS A 0150, due: 2026-12-01}\n';
 const cases = {
@@ -12,7 +12,7 @@ const cases = {
   small: head.replace('paper', 'paper') + 'project2: {}\nwalls:\n  - [[0,0],[40000,0],[40000,30000],[0,30000],[0,0]]\nrooms: [{name: 大空間, at: [20000, 15000]}]\n',
 };
 (async () => {
-  const b = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const b = await launch();
   const p = await (await b.newContext({ viewport: { width: 1440, height: 860 } })).newPage();
   const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
   await p.goto('file://' + require('path').resolve(__dirname, '../dist/index.html')); await p.waitForTimeout(400);

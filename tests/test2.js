@@ -1,7 +1,7 @@
-const { chromium } = require('playwright');
+const { launch } = require('./browser');
 const S = require('path').join(process.env.CAD_OUT || '/tmp/cad-out', '/'); require('fs').mkdirSync(S, { recursive: true });
 (async () => {
-  const b = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const b = await launch();
   const ctx = await b.newContext({ viewport: { width: 1440, height: 860 }, acceptDownloads: true });
   const p = await ctx.newPage();
   const errs = [];

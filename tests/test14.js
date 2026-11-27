@@ -1,4 +1,4 @@
-const { chromium } = require('playwright');
+const { launch } = require('./browser');
 const S = require('path').join(process.env.CAD_OUT || '/tmp/cad-out', '/'); require('fs').mkdirSync(S, { recursive: true });
 const head = 'mode: 3d\ndomain: mechanical\nproject: {title: 形状, drawing_no: F-1, material: SS400, designer: a, drafter: b, date: 2026-11-25, rev: A}\nparts:\n';
 const cases = {
@@ -10,7 +10,7 @@ const cases = {
   all: head + '  - box: {name: p, size: [100, 60, 14]}\n  - hole: {target: p, thread: M6, at: [15, 15]}\n  - hole: {target: p, diameter: 6, at: [50, 15], tilt: 30, tilt_dir: "+x"}\n  - slot: {target: p, width: 8, length: 28, at: [78, 30], dir: y}\n',
 };
 (async () => {
-  const b = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const b = await launch();
   const p = await (await b.newContext({ viewport: { width: 1300, height: 800 }, acceptDownloads: true })).newPage();
   const errs = [];
   p.on('pageerror', (e) => errs.push(e.message));

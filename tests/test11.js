@@ -1,4 +1,4 @@
-const { chromium } = require('playwright');
+const { launch } = require('./browser');
 const proj = 'project: {title: 検証, drawing_no: T-1, designer: a, drafter: b, date: 2026-11-25, standard: JIS B 0001, general_tolerance: x, finish: Ra 6.3, due: 2026-12-01, rev: A}\n';
 const asm = (headD) => `mode: 3d\ndomain: mechanical\n${proj}components:\n  plate:\n    title: プレート\n    material: SS400\n    parts:\n      - box: {name: body, size: [40, 40, 12]}\n      - hole: {target: body, diameter: 6.6, at: [20, 20], cbore_d: 11, cbore_depth: 6.5}\n  bolt:\n    title: ボルト\n    material: S45C\n    parts:\n      - cylinder: {name: head, diameter: ${headD}, height: 6, at: [0, 0, 5.5], chamfer: 0.5}\n      - cylinder: {name: shank, diameter: 6.4, height: 20, at: [0, 0, -14.5]}\nassembly:\n  - {id: P1, part: plate}\n  - {id: B1, part: bolt, at: [20, 20, 0]}\n`;
 const single = (lines) => `mode: 3d\ndomain: mechanical\n${proj}parts:\n${lines}`;
@@ -15,7 +15,7 @@ const errCases = {
   'type不正': single('  - box: {name: a, size: [30,30,10]}\n  - hole: {target: a, diameter: 5, at: [15,15], type: taper}\n'),
 };
 (async () => {
-  const b = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const b = await launch();
   const p = await (await b.newContext({ viewport: { width: 1400, height: 800 } })).newPage();
   const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
   await p.goto('file://' + require('path').resolve(__dirname, '../dist/index.html')); await p.waitForTimeout(400);
