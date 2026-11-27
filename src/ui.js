@@ -238,6 +238,8 @@ try { const raw = localStorage.getItem(KEY); if (raw) restore(JSON.parse(raw)); 
 const WF_DOMAINS = new Set(['mechanical', 'architecture']);
 const LICENSES = ($('licenses-text') ? $('licenses-text').textContent : '').trim();
 $('about-open').addEventListener('click', () => { $('about-text').textContent = LICENSES; $('about-offline').hidden = Kernel.mode !== 'web'; $('about').showModal(); });
+// 体積の表示 (mm³): 10 未満は小数 1 桁、それ以上は整数
+const fmtVol = (v) => (v < 10 ? v.toFixed(1) : Math.round(v).toLocaleString('ja-JP'));
 const baseOf = (project) => `${(project.drawing_no || 'drawing').replace(/[^\w.-]+/g, '_')}_Rev${project.rev || 'X'}`;
 function revRowsOf(project) {
   const rows = store.history.map((h) => ({ rev: h.rev, date: h.date, note: h.note }));
@@ -252,7 +254,9 @@ const mkExports = (base, project, rules, drawing, extra, bom, scale3d) => [
 function buildMechWF(spec, scene) {
   const mech = parseMech(spec), project = parseProject(spec), solids = solidsOf(mech);
   const asm = mech.assembly || null;
-  const interference = checkInterference(solids);
+  // 干渉は計算エンジンで調べる (非同期)。 求まるまでは state: 'pending' で、求まったら再描画する
+  const ikey = interferenceKey(solids);
+  const interference = interferenceFor(solids, () => { if (wf && wf.ikey === ikey) run(); });
   const revRows = revRowsOf(project);
   const secs = parseSections(spec, solids);
   let drawings, bom = null, mechs;
@@ -278,7 +282,7 @@ function buildMechWF(spec, scene) {
   const kind = asm ? 'asm' : 'single';
   const holes = mech.boxes.reduce((n, b) => n + b.holes.length, 0);
   return {
-    domain: 'mechanical', spec, project, solids, drawings, drawing: d0, rules, meshes, hash: hashSpec(spec), asm, bom,
+    domain: 'mechanical', ikey, interference, spec, project, solids, drawings, drawing: d0, rules, meshes, hash: hashSpec(spec), asm, bom,
     reqKind: kind, projText: ' / 第三角法',
     info1ok: requiredKeys(kind).every((k) => project[k]) && (!asm || asm.defs.every((x) => x.material)),
     btn: { m3: ['dl-step', 'dl-stl'], m2: ['dl-dxf', 'dl-svg', 'dl-step'] },
@@ -288,7 +292,9 @@ function buildMechWF(spec, scene) {
       label: '干渉', hot, okText: `全部品の組み合わせ(${solids.length} 部品)を確認しました`,
       note: '※ 干渉は形状の重なり(体積)で判定します。面が接しているだけの場合は干渉になりません。動作確認・CAE 解析は対象外です。',
       items: [
-        ...interference.hits.map((h) => ({ sev: 'error', text: `${h.a} × ${h.b} (重なり 約 ${Math.round(h.volume).toLocaleString('ja-JP')} mm³ / 厚み ${fmt(h.dz)} mm)` })),
+        ...(interference.state === 'pending' ? [{ sev: 'wait', text: '計算エンジンで確認中です (読み込み中は、完了までお待ちください)' }] : []),
+        ...(interference.state === 'unavailable' ? [{ sev: 'error', text: '計算エンジンが使えないため、干渉を確認できません。 ページを読み込み直してください' }] : []),
+        ...interference.hits.map((h) => ({ sev: 'error', text: `${h.a} × ${h.b} (重なり ${fmtVol(h.volume)} mm³ / 厚み ${fmt(h.dz)} mm)` })),
         ...(interference.floating.length ? [{ sev: 'warn', text: `他の部品と接していない: ${interference.floating.join('、')}` }] : []),
       ],
     },
@@ -346,7 +352,7 @@ function stepStatus(n) {
   if (!wf) return '';
   if (n === 1) return wf.info1ok ? 'ok' : 'ng';
   if (n === 2) return 'ok';
-  if (n === 3) return wf.step3.items.some((i) => i.sev === 'error') ? 'ng' : 'ok';
+  if (n === 3) return wf.step3.items.some((i) => i.sev === 'error') ? 'ng' : wf.step3.items.some((i) => i.sev === 'wait') ? 'wait' : 'ok';
   if (n === 4) return wf.rules.filter((r) => ['E02', 'E04'].includes(r.id)).every((r) => r.ok) ? 'ok' : 'ng';
   if (n === 5) return approvalValid() ? 'ok' : (errorsOf().length ? 'ng' : 'wait');
   if (n === 6) { const d = delivered(); return d && d.hash === wf.hash ? 'ok' : 'wait'; }
@@ -489,15 +495,15 @@ function present() {
     if (cur.kind === '2d') { view2d(cur.prims, 'plan2d'); statusEl.textContent = wf.status2d(bounds2d(cur.prims)); setButtons(wf.btn.m2); }
     else if (view3d(wf.meshes, 'model')) { statusEl.textContent = wf.status3d; setButtons(wf.btn.m3); }
   } else if (step === 3) {
-    const S3 = wf.step3, bad = S3.items.filter((i) => i.sev === 'error').length;
+    const S3 = wf.step3, bad = S3.items.filter((i) => i.sev === 'error').length, wait = S3.items.some((i) => i.sev === 'wait');
+    const warns = S3.items.filter((i) => i.sev === 'warn').length;
     if (view3d(wf.meshes, 'model', S3.hot)) {
-      statusEl.textContent = bad ? `${S3.label} ${bad} 件 (赤で表示)` : S3.items.length ? `警告 ${S3.items.length} 件` : `${S3.label}なし`;
+      statusEl.textContent = bad ? `${S3.label} ${bad} 件 (赤で表示)` : wait ? `${S3.label} 確認中…` : warns ? `警告 ${warns} 件` : `${S3.label}なし`;
       setButtons(wf.btn.m3);
       resultbar.hidden = false;
-      resultbar.innerHTML = (S3.items.length
-        ? S3.items.map((i) => `<div class="res"><span class="chip ${i.sev === 'error' ? 'ng' : 'warn'}">${i.sev === 'error' ? S3.label : '警告'}</span> ${E(i.text)}</div>`).join('')
-        : `<div class="res"><span class="chip ok">✓ ${S3.label}なし</span> ${E(S3.okText)}</div>`)
-        + (S3.items.length && !S3.items.some((i) => i.sev === 'error') ? `<div class="res"><span class="chip ok">✓ ${S3.label}なし</span> ${E(S3.okText)}</div>` : '')
+      const chip = (i) => (i.sev === 'error' ? `<span class="chip ng">${S3.label}</span>` : i.sev === 'wait' ? '<span class="chip warn">確認中</span>' : '<span class="chip warn">警告</span>');
+      resultbar.innerHTML = S3.items.map((i) => `<div class="res">${chip(i)} ${E(i.text)}</div>`).join('')
+        + (!bad && !wait ? `<div class="res"><span class="chip ok">✓ ${S3.label}なし</span> ${E(S3.okText)}</div>` : '')
         + `<div class="res muted">${E(S3.note)}</div>`;
     }
   } else if (step === 4) {
@@ -734,6 +740,8 @@ Kernel.onStatus((st) => {
 setTimeout(() => Kernel.start().catch(() => {}), 0); // 先に画面を描いてから読み込みを始める
 window.__cad = {
   kernel: Kernel,
-  run, goStep, kernelExport, kernelModelOf, get cur() { return cur; }, get wf() { return wf; }, store, toDXF, toSTL, makeZip,
-  checkInterference, parseMech, solidsOf, buildDrawing, sectionGroups, jscad: jscadModeling, build3dMech, conformPolys, buildScene, jsyaml,
+  run, goStep, kernelExport, interferenceFor, floatingParts,
+  // 干渉の計算が終わるまで待つ (テスト用)
+  settled: async () => { for (let i = 0; i < 2000 && wf && wf.interference && wf.interference.state === 'pending'; i++) await new Promise((r) => setTimeout(r, 30)); }, kernelModelOf, get cur() { return cur; }, get wf() { return wf; }, store, toDXF, toSTL, makeZip,
+  parseMech, solidsOf, buildDrawing, sectionGroups, jscad: jscadModeling, build3dMech, conformPolys, buildScene, jsyaml,
 };

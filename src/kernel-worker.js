@@ -103,6 +103,28 @@ function isValid(shape) {
 
 // ---- 操作 (ops) ----------------------------------------------------------------
 const ops = {
+  // 干渉: 部品どうしの共通部分の体積。 同じ部品 (inst が同じ) の立体どうしは調べない。
+  // 面で接するだけ (体積 0) は干渉ではない。 戻り値の i, j は model の番号、 dz は共通部分の高さ
+  async interfere({ model }) {
+    const shapes = model.map(makeSolid);
+    const bb = shapes.map((s) => s.boundingBox.bounds);
+    const hits = [];
+    for (let i = 0; i < shapes.length; i++) {
+      for (let j = i + 1; j < shapes.length; j++) {
+        if (model[i].inst !== undefined && model[i].inst === model[j].inst) continue;
+        const [a, b] = [bb[i], bb[j]];
+        if ([0, 1, 2].some((k) => Math.min(a[1][k], b[1][k]) - Math.max(a[0][k], b[0][k]) <= 1e-7)) continue; // 外形が重ならない
+        let volume = 0, dz = 0;
+        try {
+          const c = shapes[i].intersect(shapes[j]);
+          volume = R.measureVolume(c);
+          if (volume > 1e-3) { const cb = c.boundingBox.bounds; dz = cb[1][2] - cb[0][2]; }
+        } catch (e) { volume = 0; } // 共通部分が空のときなど
+        if (volume > 1e-3) hits.push({ i, j, volume, dz });
+      }
+    }
+    return { hits };
+  },
   // 立体の記述から STEP / STL と、立体ごとの体積・表面積・面の数・有効性を返す
   async buildModel({ model }) {
     const shapes = model.map((m) => ({ name: m.name, shape: makeSolid(m) }));

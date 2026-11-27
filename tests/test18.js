@@ -27,7 +27,7 @@ function serve(dir) {
 
 const results = [];
 (async () => {
-  const b = await launch();
+  const b = await launch({ waitKernel: false });
   const srv = await serve(path.join(root, 'dist'));
   const base = `http://127.0.0.1:${srv.address().port}/`;
   const targets = [

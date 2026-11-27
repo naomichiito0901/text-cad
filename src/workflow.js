@@ -67,55 +67,10 @@ function solidsOf(m) {
   }));
   return S;
 }
-// 点 (x,y,z) が材料の中にあるか (座ぐり・止まり穴・面取り・角R を考慮)
-function occupied(s, x, y, z) {
-  if (!(z > s.z0 + eps && z < s.z1 - eps)) return false;
-  const ins = s.kind === 'cyl' ? cylInset(s, z) : (s.ct && z > s.z1 - s.ct ? z - (s.z1 - s.ct) : s.cb && z < s.z0 + s.cb ? s.z0 + s.cb - z : 0);
-  if (s.kind === 'cyl') return Math.hypot(x - s.cx, y - s.cy) < s.r - ins - eps;
-  if (!(x > s.x0 + ins + eps && x < s.x1 - ins - eps && y > s.y0 + ins + eps && y < s.y1 - ins - eps)) return false;
-  if (s.cr) {
-    const qx = Math.max(Math.abs(x - (s.x0 + s.x1) / 2) - ((s.x1 - s.x0) / 2 - s.cr), 0), qy = Math.max(Math.abs(y - (s.y0 + s.y1) / 2) - ((s.y1 - s.y0) / 2 - s.cr), 0);
-    if (qx * qx + qy * qy >= s.cr * s.cr - eps) return false;
-  }
-  if (s.slots && s.slots.some((sl) => { const [a, b] = slotSeg(sl); return distSeg(x, y, a, b) < sl.w / 2 + eps; })) return false;
-  return !s.holes.some((h) => {
-    if (h.tilt) {
-      const [ax, ay] = axisAt(h, s.z1, z), X = x - ax, Y = y - ay;
-      const pu = h.tdir[0] * X + h.tdir[1] * Y, pv = -h.tdir[1] * X + h.tdir[0] * Y;
-      return Math.hypot(pu * tiltC(h), pv) < h.d / 2 + eps;
-    }
-    const r = holeRadiusAt(h, s.z1, s.z0, z);
-    return r > 0 && Math.hypot(x - h.x, y - h.y) < r + eps;
-  });
-}
-
 /* ---------- 工程3: 干渉チェック ---------- */
-function checkInterference(solids) {
-  const hits = [];
-  for (let i = 0; i < solids.length; i++) {
-    for (let j = i + 1; j < solids.length; j++) {
-      const a = solids[i], b = solids[j];
-      if (a.inst !== undefined && a.inst === b.inst) continue; // 同じ部品内の形状は一体として扱う
-      const x0 = Math.max(a.x0, b.x0), x1 = Math.min(a.x1, b.x1);
-      const y0 = Math.max(a.y0, b.y0), y1 = Math.min(a.y1, b.y1);
-      const z0 = Math.max(a.z0, b.z0), z1 = Math.min(a.z1, b.z1);
-      const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
-      if (dx <= eps || dy <= eps || dz <= eps) continue;
-      const nxy = 56, nz = Math.max(8, Math.min(48, Math.round(dz / (Math.max(dx, dy) / nxy))));
-      let cnt = 0;
-      for (let k = 0; k < nz; k++) {
-        const z = z0 + dz * (k + 0.5) / nz;
-        for (let u = 0; u < nxy; u++) {
-          const x = x0 + dx * (u + 0.5) / nxy;
-          for (let v = 0; v < nxy; v++) {
-            const y = y0 + dy * (v + 0.5) / nxy;
-            if (occupied(a, x, y, z) && occupied(b, x, y, z)) cnt++;
-          }
-        }
-      }
-      if (cnt) hits.push({ a: a.name, b: b.name, volume: cnt * (dx * dy * dz) / (nxy * nxy * nz), dz });
-    }
-  }
+// 部品どうしの干渉 (共通部分の体積) は、計算エンジンで求める (src/kernel-model.js / src/kernel-worker.js)
+// 他の部品と接していない部品 (外形が接していない)。 組立で、どの部品とも外形が触れていないものを返す
+function floatingParts(solids) {
   const floating = [];
   const group = (o) => (o.inst !== undefined ? o.inst : o.name);
   if (new Set(solids.map(group)).size > 1) {
@@ -131,7 +86,7 @@ function checkInterference(solids) {
       done.add(g);
     });
   }
-  return { hits, floating };
+  return floating;
 }
 
 /* ---------- 図枠の共通部品 (機械・建築で共用) ---------- */
@@ -675,8 +630,10 @@ function runChecks(ctx) {
   const dimMiss = drawings.map((dw) => ({ label: dw.label, miss: dw.d.need.filter((k) => !dw.d.have.includes(k)) })).filter((x) => x.miss.length);
   add('E02', '寸法の記入漏れ (形状寸法・穴径・位置寸法)', 'error', !dimMiss.length,
     dimMiss.map((x) => `${x.label}: ${x.miss.length} 件 (${x.miss.slice(0, 4).join(', ')}${x.miss.length > 4 ? ' ...' : ''})`).join(' / '));
-  add('E03', asmInfo ? '部品どうしの干渉 (組立)' : '部品どうしの干渉', 'error', !interference.hits.length,
-    interference.hits.map((h) => `${h.a} × ${h.b} (約 ${Math.round(h.volume).toLocaleString('ja-JP')} mm³)`).join(' / '));
+  add('E03', asmInfo ? '部品どうしの干渉 (組立)' : '部品どうしの干渉', 'error', interference.state === 'done' && !interference.hits.length,
+    interference.state === 'pending' ? '計算エンジンで確認中です'
+      : interference.state === 'unavailable' ? '計算エンジンが使えないため確認できません'
+        : interference.hits.map((h) => `${h.a} × ${h.b} (${h.volume < 10 ? h.volume.toFixed(1) : Math.round(h.volume).toLocaleString('ja-JP')} mm³)`).join(' / '));
   const nofit = drawings.filter((dw) => !dw.d.fits);
   add('E04', '図面が用紙に収まっている', 'error', !nofit.length, `${nofit.map((dw) => dw.label).join('、')}: 尺度 ${nofit[0] ? scaleText(nofit[0].d.scale) : ''} では ${P.paper} に収まりません。用紙か尺度を変更してください`);
   const nonStd = drawings.filter((dw) => !isStdScale(dw.d.scale));

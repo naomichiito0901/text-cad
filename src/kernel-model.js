@@ -4,10 +4,10 @@
 function kernelModelOf(solids) {
   return solids.map((s) => {
     if (s.kind === 'cyl') {
-      return { kind: 'cyl', name: s.name, cx: s.cx, cy: s.cy, r: s.r, z0: s.z0, z1: s.z1, ct: s.ct || 0, cb: s.cb || 0, ft: s.ft || 0, fb: s.fb || 0 };
+      return { kind: 'cyl', name: s.name, inst: s.inst, cx: s.cx, cy: s.cy, r: s.r, z0: s.z0, z1: s.z1, ct: s.ct || 0, cb: s.cb || 0, ft: s.ft || 0, fb: s.fb || 0 };
     }
     return {
-      kind: 'box', name: s.name, x0: s.x0, y0: s.y0, z0: s.z0, x1: s.x1, y1: s.y1, z1: s.z1, cr: s.cr || 0, ct: s.ct || 0, cb: s.cb || 0,
+      kind: 'box', name: s.name, inst: s.inst, x0: s.x0, y0: s.y0, z0: s.z0, x1: s.x1, y1: s.y1, z1: s.z1, cr: s.cr || 0, ct: s.ct || 0, cb: s.cb || 0,
       holes: s.holes.map((h) => {
         if (h.tilt) return { tilt: { x: h.x, y: h.y, d: h.d, angle: h.tilt, dir: h.tdir } };
         const { pts, through } = holeSteps(h, s.z1, s.z0);
@@ -49,4 +49,25 @@ async function kernelOrOld(wf, fileName, what, oldFn) {
     try { return { data: (await kernelExport(wf, fileName))[what], engine: 'kernel' }; } catch (e) { /* 下で扱う */ }
   }
   return oldFn ? { data: oldFn(), engine: 'old' } : { data: null, engine: 'none' };
+}
+
+// 干渉チェック: 部品どうしの共通部分の体積を、計算エンジンで求める (非同期)。
+// 結果は立体の記述ごとに覚える。 まだ求まっていなければ state: 'pending' を返し、求まったら onDone() を呼ぶ。
+// 計算エンジンが使えなければ state: 'unavailable'。 「浮いている部品」は外形 (バウンディングボックス) の接触で判定する
+const interferenceCache = new Map();
+const interferenceKey = (solids) => JSON.stringify(kernelModelOf(solids));
+function interferenceFor(solids, onDone) {
+  const key = interferenceKey(solids);
+  let e = interferenceCache.get(key);
+  if (!e) {
+    e = { state: 'pending', hits: [] };
+    if (interferenceCache.size > 16) interferenceCache.delete(interferenceCache.keys().next().value);
+    interferenceCache.set(key, e);
+    const names = solids.map((o) => o.name);
+    Kernel.call('interfere', { model: JSON.parse(key) }).then((r) => {
+      e.hits = r.hits.map((h) => ({ a: names[h.i], b: names[h.j], volume: h.volume, dz: h.dz }));
+      e.state = 'done';
+    }, () => { e.state = 'unavailable'; }).then(() => onDone && onDone());
+  }
+  return { state: e.state, hits: e.hits, floating: floatingParts(solids) };
 }

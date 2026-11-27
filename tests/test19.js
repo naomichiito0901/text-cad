@@ -1,7 +1,7 @@
 // 計算エンジン (OpenCascade) の STEP・STL の出力。 形状のケース (cases.js) とアプリのサンプルについて、
 // k_<ケース>.{step,stl,json} に書き出す。 体積・表面積・面数・有効性の一覧と理論値の照合は validate6.py が行う。
 // あわせて、画面の STEP・STL ダウンロードがカーネルの出力であること、
-// 計算エンジンが使えないとき (Web 版を file:// で開いた場合) の挙動を確認する。
+// 計算エンジンが使えないとき (Web 版を file:// で開いた場合) の挙動 (STEP は作れない・STL は旧方式・干渉を確認できず承認できない) を確認する。
 const { launch } = require('./browser');
 const fs = require('fs');
 const path = require('path');
@@ -85,24 +85,18 @@ fs.mkdirSync(S, { recursive: true });
     const [dl] = await Promise.all([q.waitForEvent('download', { timeout: 10000 }), q.click('[data-act="f-exp"][data-id="stl"]')]);
     stlOld = fs.readFileSync(await dl.path(), 'utf8').slice(0, 20);
   } catch (e) { stlOld = 'download なし'; }
-  // 納品 zip: 3D モデルを作れないので、版の確定 (改訂履歴への記録) をする前に止まる
+  // 検図: 干渉を確認できないので (E03)、承認できない (= 納品にも進めない)
   await q.click('[data-step="5"]'); await q.waitForTimeout(300);
-  await q.fill('#appr-name', '検図者A'); if (await q.$('#appr-ack')) await q.check('#appr-ack');
-  await q.click('[data-act="approve"]'); await q.waitForTimeout(300);
-  await q.click('[data-step="6"]'); await q.waitForTimeout(300);
-  const histBefore = await q.evaluate(() => window.__cad.store.history.length);
-  let zipFile = false;
-  q.once('download', () => { zipFile = true; });
-  await q.click('[data-act="zip"]'); await q.waitForTimeout(800);
-  const zipMsg = await q.textContent('#error');
-  const histAfter = await q.evaluate(() => window.__cad.store.history.length);
+  await q.fill('#appr-name', '検図者A');
+  const approveDisabled = await q.isDisabled('[data-act="approve"]');
+  const panel5 = (await q.textContent('#panel')) || '';
   const fb = {
     stepBlocked: !stepDownloaded && /計算エンジンで作ります/.test(stepMsg || ''),
     stlFallback: /^solid cad_text/.test(stlOld),
-    zipBlocked: !zipFile && /納品パッケージを作成できません/.test(zipMsg || '') && histAfter === histBefore,
+    approveBlocked: approveDisabled && /計算エンジンが使えないため確認できません/.test(panel5),
   };
-  console.log('kernel unavailable:', JSON.stringify(fb), JSON.stringify({ stepMsg, zipMsg, histBefore, histAfter }));
-  if (!fb.stepBlocked || !fb.stlFallback || !fb.zipBlocked) errs.push('計算エンジンが使えないときの挙動が想定と違います');
+  console.log('kernel unavailable:', JSON.stringify(fb), JSON.stringify({ stepMsg }));
+  if (!fb.stepBlocked || !fb.stlFallback || !fb.approveBlocked) errs.push('計算エンジンが使えないときの挙動が想定と違います');
 
   console.log('ERRORS', errs);
   await b.close();
