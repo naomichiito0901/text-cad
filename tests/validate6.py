@@ -1,14 +1,11 @@
-"""新旧の比較: 旧実装 (自作 STEP ライター・JSCAD) と、計算エンジン (OpenCascade) が同じ立体から作った
-STEP・STL を、OpenCascade で読み直して一覧にし、理論式と照合する (test19.js が書き出したファイルを使う)。
+"""計算エンジン (replicad / OpenCascade WASM) が出力した STEP・STL を、OpenCascade で読み直して一覧にし、理論式と照合する
+(test19.js が k_<ケース>.{step,stl} に書き出したファイルを使う)。
 
 一覧の項目: STEP の有効性 / 立体の数 / 面の数 / 体積 / 表面積 / STL の水密性と体積。
-形状の一致: 新旧を互いに差し引いた体積 (対称差) が 0 に近いこと。
-理論値: 体積はすべての単純ケースで、表面積は計算できるケースで照合する (理論値が無いのはサンプルなど)。
+理論値: 体積・表面積とも、理論式のあるケースで照合する (サンプルには理論式が無いので、有効性と STL だけを確認する)。
 
-合格基準:
-  新 : STEP が有効 / 理論体積・理論面積と 1e-4 以内 / STL が水密で体積が STEP と 0.5% 以内
-  新旧: 体積の差 1e-4 以内 / 対称差が体積の 1e-4 以内
-面の数の違いは一覧に出すだけ (OpenCascade は周期面を 1 つの面にするなど、数え方が旧実装と違うことがある)。
+合格基準: STEP が有効 / 理論体積・理論面積と 1e-4 以内 / STL が水密で体積が STEP と 0.5% 以内
+(面の数は一覧に出すだけ。 OpenCascade は周期面を継ぎ目で別の面として数える)
 """
 import math, os, re, sys, json
 import numpy as np
@@ -19,7 +16,6 @@ from OCP.GProp import GProp_GProps
 from OCP.BRepGProp import BRepGProp
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopAbs import TopAbs_FACE, TopAbs_SOLID
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
 
 S = os.environ.get('CAD_OUT', '/tmp/cad-out') + '/'
 pi = math.pi
@@ -179,62 +175,23 @@ def stl(fn):
     return vol, sum(1 for (a, b), c in E.items() if E.get((b, a), 0) != c)
 
 
-def solids_of(shp):
-    """複合体から立体を 1 つずつ取り出す (面で接する立体を含む複合体どうしの演算は不安定なため、立体ごとに比べる)"""
-    out = []
-    e = TopExp_Explorer(shp, TopAbs_SOLID)
-    while e.More():
-        s = e.Current()
-        g = GProp_GProps(); BRepGProp.VolumeProperties_s(s, g)
-        c = g.CentreOfMass()
-        out.append((s, g.Mass(), (c.X(), c.Y(), c.Z())))
-        e.Next()
-    return out
-
-
-def symdiff(a, b):
-    """新旧の立体を、体積と重心で 1 対 1 に対応づけ、互いに差し引いた体積の合計を返す。 対応づけられなければ nan"""
-    A, Bs = solids_of(a), solids_of(b)
-    if len(A) != len(Bs):
-        return float('nan')
-    out, used = 0.0, set()
-    for x, vx, cx in A:
-        best = min((j for j in range(len(Bs)) if j not in used), key=lambda j: abs(Bs[j][1] - vx) + sum(abs(p - q) for p, q in zip(Bs[j][2], cx)))
-        used.add(best)
-        y = Bs[best][0]
-        for p, q in ((x, y), (y, x)):
-            op = BRepAlgoAPI_Cut(p, q)
-            if not op.IsDone():
-                return float('nan')
-            out += props(op.Shape())[0]
-    return out
-
-
 ok = True
-print('凡例: 旧=自作STEPライター / 新=OpenCascade。 体積・面積は mm³・mm²。 差は 新と旧の相対差、対称差は新旧を互いに差し引いた体積の合計')
-print(f"{'case':8} {'':2} {'有効':4} {'立体':3} {'面':3} {'体積':>10} {'面積':>10} {'STL水密':>7} {'STL体積差':>9} | {'理論体積差':>9} {'理論面積差':>9} | {'新旧体積差':>9} {'対称差':>9}")
+print('体積・面積は mm³・mm²。 「理論」の列は、理論式との相対差')
+print(f"{'case':8} {'有効':4} {'立体':3} {'面':3} {'体積':>10} {'面積':>10} {'STL水密':>7} {'STL体積差':>9} | {'理論体積差':>9} {'理論面積差':>9}")
 for k in CASES:
-    row = {}
-    for tag in ('old', 'new'):
-        shp = load(S + f'cmp_{k}_{tag}.step')
-        v, a = props(shp)
-        sv, um = stl(S + f'cmp_{k}_{tag}.stl')
-        row[tag] = dict(shp=shp, valid=BRepCheck_Analyzer(shp).IsValid(), solids=count(shp, TopAbs_SOLID), faces=count(shp, TopAbs_FACE), vol=v, area=a, um=um, stlerr=abs(sv - v) / v)
-    o, n = row['old'], row['new']
+    shp = load(S + f'k_{k}.step')
+    v, a = props(shp)
+    sv, um = stl(S + f'k_{k}.stl')
+    r = dict(valid=BRepCheck_Analyzer(shp).IsValid(), solids=count(shp, TopAbs_SOLID), faces=count(shp, TopAbs_FACE), vol=v, area=a, um=um, stlerr=abs(sv - v) / v)
+    good = r['valid'] and r['um'] == 0 and r['stlerr'] < 0.005
+    tail = ''
     th = THEORY.get(k)
-    sd = symdiff(o['shp'], n['shp'])
-    dv = abs(n['vol'] - o['vol']) / o['vol']
-    good = n['valid'] and n['um'] == 0 and n['stlerr'] < 0.005 and dv < 1e-4 and sd < 1e-4 * o['vol']  # nan は不合格
-    tv = ta = ''
     if th:
-        ev, ea = abs(n['vol'] - th[0]) / th[0], abs(n['area'] - th[1]) / th[1]
+        ev, ea = abs(v - th[0]) / th[0], abs(a - th[1]) / th[1]
         good = good and ev < 1e-4 and ea < 1e-4
-        tv, ta = f'{ev * 100:.4f}%', f'{ea * 100:.4f}%'
+        tail = f" | {ev * 100:8.4f}% {ea * 100:8.4f}%"
     ok &= good
-    for tag in ('old', 'new'):
-        r = row[tag]
-        last = f" | {tv:>9} {ta:>9} | {dv * 100:8.4f}% {sd:9.4f}" if tag == 'new' else ''
-        print(f"{k if tag == 'old' else '':8} {tag:2} {str(r['valid']):4} {r['solids']:3d} {r['faces']:3d} {r['vol']:10.2f} {r['area']:10.2f} {r['um']:7d} {r['stlerr'] * 100:8.4f}%{last}")
+    print(f"{k:8} {str(r['valid']):4} {r['solids']:3d} {r['faces']:3d} {r['vol']:10.2f} {r['area']:10.2f} {r['um']:7d} {r['stlerr'] * 100:8.4f}%{tail}")
     if not good:
         print(f'   ^^^ {k}: 不一致あり')
 print('ALL OK:', ok)

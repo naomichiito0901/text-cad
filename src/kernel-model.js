@@ -39,13 +39,14 @@ async function kernelExport(wf, fileName) {
   return { ...out, step: stepHeader(out.step, wf.project, fileName || 'model.step') };
 }
 
-// 出力ボタン用: 計算エンジンが読み込み中なら待つ。 使えなければ旧実装の出力にする (戻り値の engine で区別)
+// 出力ボタン用: 計算エンジンが読み込み中なら待つ。
+// 使えないとき、oldFn があればそれで作り (engine: 'old')、無ければ data: null を返す (engine: 'none')
 async function kernelOrOld(wf, fileName, what, oldFn) {
   if (Kernel.state.phase === 'idle' || Kernel.state.phase === 'loading') {
-    try { await Kernel.ready; } catch (e) { /* 失敗は下で旧実装に切り替える */ }
+    try { await Kernel.ready; } catch (e) { /* 失敗は下で扱う */ }
   }
   if (Kernel.state.phase === 'ready') {
-    try { return { data: (await kernelExport(wf, fileName))[what], engine: 'kernel' }; } catch (e) { /* 旧実装へ */ }
+    try { return { data: (await kernelExport(wf, fileName))[what], engine: 'kernel' }; } catch (e) { /* 下で扱う */ }
   }
-  return { data: oldFn(), engine: 'old' };
+  return oldFn ? { data: oldFn(), engine: 'old' } : { data: null, engine: 'none' };
 }
