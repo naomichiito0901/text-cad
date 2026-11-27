@@ -37,14 +37,16 @@ jobs:
           cache: pip
           cache-dependency-path: tests/requirements.txt
 
+      # 依存の取得は、配布元の一時的な障害 (apt の 403 など) で止まらないよう、再試行する。
+      # テストの実行 (下の Test) は再試行しない。 テストが本当に失敗したときは、そのまま失敗にして公開しない。
       - name: Install dependencies
         run: |
-          npm ci
-          npx playwright install --with-deps ${{ matrix.browser }}
+          bash tools/retry.sh 3 npm ci
+          bash tools/ci-install-browser.sh ${{ matrix.browser }}
 
       - name: Install Python dependencies (出力検証用)
         if: matrix.browser == 'chromium'
-        run: pip install -r tests/requirements.txt
+        run: bash tools/retry.sh 3 pip install -r tests/requirements.txt
 
       - name: Build
         run: python3 build.py
@@ -75,7 +77,7 @@ jobs:
           node-version: 24
           cache: npm
 
-      - run: npm ci --ignore-scripts
+      - run: bash tools/retry.sh 3 npm ci --ignore-scripts
 
       - run: python3 build.py
 
