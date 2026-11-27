@@ -7,7 +7,7 @@ const S = require('path').join(process.env.CAD_OUT || '/tmp/cad-out', '/'); requ
   const errs = [];
   p.on('pageerror', e => errs.push('pageerror: ' + e.message));
   p.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.text()); });
-  await p.goto('file://' + require('path').resolve(__dirname, '../dist/index.html'));
+  await p.goto('file://' + require('path').resolve(__dirname, '../dist-offline/index.html'));
   await p.waitForTimeout(500);
   const st = async () => (await p.textContent('#status')) + ' | err:' + ((await p.textContent('#error')) || '-');
   for (const n of [1, 2, 3, 4, 5, 6]) {

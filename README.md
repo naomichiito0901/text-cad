@@ -26,6 +26,10 @@ WASM は外部 CDN を使わず、必ず同梱します(Web 版は `kernel/` を
 読み込み中(数秒)も YAML は編集でき、画面右上に「計算エンジン: 読み込み中 NN%」→「準備完了」と表示します。
 `file://` で開く Web 版では `fetch` が使えないため、計算エンジンは読み込まれません(案内を出します。旧実装で動作は続きます)。
 
+**3D モデルの STEP・STL は、計算エンジンの出力です**(機械部品。建築の IFC・STL は旧実装のまま)。
+STEP は OpenCascade の書き出し(AP242)で、日本語の名前は `\X2\…\X0\` に直します。ヘッダ(FILE_NAME)には案件の作図者などを入れます。
+出力ボタンは、計算エンジンが読み込み中なら待ち、使えなければ旧実装の形式で出力します(その旨を表示)。旧実装(自作 STEP ライター・JSCAD)は、新旧の比較のために残してあります。
+
 起動用 JavaScript への補正は `patches/` に差分で残しています(WASM 本体は改変しません)。詳しくは `patches/README.md`。
 
 ## 公開 (GitHub Pages)
@@ -113,6 +117,8 @@ done
 | validate3.py | test16 の STEP/STL を理論体積と照合 |
 | test18.js | 計算エンジンの読み込み(オフライン版 file://・Web 版 HTTP・読み込み中の編集・Web 版を file:// で開いた場合)と、Worker での計算 |
 | validate5.py | test18 が書き出したカーネル出力の STEP・STL を OpenCascade で読み直し、体積・表面積を理論式と照合 |
+| test19.js | 新旧の比較: 同じ立体から、旧実装(自作 STEP ライター・JSCAD の STL)と計算エンジンの STEP・STL を作って書き出す。画面の STEP・STL ダウンロードがカーネル出力であることも確認 |
+| validate6.py | test19 の出力を OpenCascade で読み直し、新旧の一覧(有効性・立体数・面数・体積・表面積・STL)と、理論式との照合、新旧の対称差(形状の一致)を確認 |
 | validate4.py | 納品 zip 内の DXF (audit)・STEP (有効性・体積)・IFC (要素数)・LICENSES.txt の同梱を検査 |
 
 ### 合格基準
