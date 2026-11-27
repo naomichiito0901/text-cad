@@ -25,14 +25,17 @@ function stepHeader(step, project, fileName) {
   return step.replace(/FILE_NAME\([\s\S]*?\);\s*FILE_SCHEMA/, head);
 }
 
-// 計算エンジンで STEP と STL を作る。 同じ立体なら再計算しない
+// 計算エンジンで、部品ごとに融合した STEP と STL を作る。 同じ立体・同じ形式なら再計算しない。
+// STEP の形式は案件情報の step_format (AP242 | AP214)。 失敗したら、理由つきの Error を投げる
 const kernelCache = new Map();
 async function kernelExport(wf, fileName) {
   const model = kernelModelOf(wf.solids);
-  const key = JSON.stringify(model);
+  const format = wf.project.step_format || 'AP242';
+  const test = window.__kernelTest || undefined; // テスト用の指定 (融合の失敗を再現する)
+  const key = JSON.stringify([model, format, test]);
   if (!kernelCache.has(key)) {
     if (kernelCache.size > 8) kernelCache.delete(kernelCache.keys().next().value);
-    kernelCache.set(key, Kernel.call('buildModel', { model }));
+    kernelCache.set(key, Kernel.call('buildModel', { model, format, test }));
   }
   let out;
   try { out = await kernelCache.get(key); } catch (e) { kernelCache.delete(key); throw e; }
@@ -40,15 +43,16 @@ async function kernelExport(wf, fileName) {
 }
 
 // 出力ボタン用: 計算エンジンが読み込み中なら待つ。
-// 使えないとき、oldFn があればそれで作り (engine: 'old')、無ければ data: null を返す (engine: 'none')
+// 戻り値の engine: 'kernel' (計算エンジン) / 'old' (使えず、oldFn で作った) / 'none' (作れない。 reason に理由)
 async function kernelOrOld(wf, fileName, what, oldFn) {
+  let reason = '';
   if (Kernel.state.phase === 'idle' || Kernel.state.phase === 'loading') {
     try { await Kernel.ready; } catch (e) { /* 失敗は下で扱う */ }
   }
   if (Kernel.state.phase === 'ready') {
-    try { return { data: (await kernelExport(wf, fileName))[what], engine: 'kernel' }; } catch (e) { /* 下で扱う */ }
-  }
-  return oldFn ? { data: oldFn(), engine: 'old' } : { data: null, engine: 'none' };
+    try { return { data: (await kernelExport(wf, fileName))[what], engine: 'kernel' }; } catch (e) { reason = String((e && e.message) || e); }
+  } else reason = '計算エンジンを読み込めませんでした。 ページを読み込み直してください';
+  return oldFn ? { data: oldFn(), engine: 'old', reason } : { data: null, engine: 'none', reason };
 }
 
 // 干渉チェック: 部品どうしの共通部分の体積を、計算エンジンで求める (非同期)。
@@ -66,8 +70,9 @@ function interferenceFor(solids, onDone) {
     const names = solids.map((o) => o.name);
     Kernel.call('interfere', { model: JSON.parse(key) }).then((r) => {
       e.hits = r.hits.map((h) => ({ a: names[h.i], b: names[h.j], volume: h.volume, dz: h.dz }));
+      e.parts = r.parts; // 部品ごとの情報 (離れた立体があるか)
       e.state = 'done';
     }, () => { e.state = 'unavailable'; }).then(() => onDone && onDone());
   }
-  return { state: e.state, hits: e.hits, floating: floatingParts(solids) };
+  return { state: e.state, hits: e.hits, parts: e.parts || null, floating: floatingParts(solids) };
 }

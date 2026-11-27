@@ -35,19 +35,22 @@ function parseProject(spec) {
   }
   const notes = p.notes === undefined || p.notes === null ? [] : p.notes;
   if (!Array.isArray(notes)) fail('project の notes は「- 注記」の一覧で書いてください');
+  // STEP の形式 (機械部品の 3D モデルの出力)。 省略時は AP242 (標準)。 AP214 は旧来の CAD との互換用
+  const sf = (sstr(p.step_format) || 'AP242').toUpperCase().replace(/[\s_-]+/g, '');
+  if (!['AP242', 'AP214'].includes(sf)) fail('project の step_format は AP242 または AP214 のどちらかです (省略すると AP242)');
   const dimensions = sstr(spec.dimensions) || 'auto';
   if (!['auto', 'none'].includes(dimensions)) fail('dimensions は auto か none です');
   return {
     title: sstr(p.title), drawing_no: sstr(p.drawing_no), material: sstr(p.material),
     designer: sstr(p.designer), drafter: sstr(p.drafter), date: sstr(p.date), due: sstr(p.due),
     standard: sstr(p.standard), general_tolerance: sstr(p.general_tolerance), finish: sstr(p.finish),
-    rev: sstr(p.rev), paper, scale, notes: notes.map(sstr).filter(Boolean), dimensions,
+    rev: sstr(p.rev), step_format: sf, paper, scale, notes: notes.map(sstr).filter(Boolean), dimensions,
   };
 }
 const PROJECT_FIELDS = [
   ['title', '図名'], ['drawing_no', '図番'], ['material', '材質'], ['designer', '設計者'],
   ['drafter', '作図者'], ['date', '作成日'], ['due', '納期'], ['standard', '図面規格'],
-  ['general_tolerance', '普通公差'], ['finish', '表面粗さ(一般)'], ['rev', '版'],
+  ['general_tolerance', '普通公差'], ['finish', '表面粗さ(一般)'], ['rev', '版'], ['step_format', 'STEP の形式'],
 ];
 
 /* ---------- 立体の整理 (ワールド座標) ---------- */
@@ -684,6 +687,9 @@ function runChecks(ctx) {
   add('W20', 'ねじの有効深さが呼び径以上、下穴が十分深い', 'warn', !threadShort.length && !threadDrill.length, [...threadShort, ...threadDrill].join(' / '));
   add('W21', '長穴の縁端距離が幅以上', 'warn', !slotEdge.length, slotEdge.join(' / '));
   add('W22', '斜め穴の角度が 45° 以下 (加工性)', 'warn', !steep.length, steep.join(' / '));
+  // 1 つの部品を構成する立体は融合して出力する。 離れていて融合できない立体があるときは、別の立体のまま出力するので知らせる
+  const apart = ((interference && interference.parts) || []).filter((x) => x.solids > 1);
+  add('W23', '1 つの部品に離れた立体がない', 'warn', !apart.length, apart.map((x) => `部品「${x.name}」に離れた立体があります (${x.solids} 個。別の立体のまま出力します)`).join(' / '));
   add('I01', '穴の公差・はめあいの指定', 'info', !fitMiss.length, `未指定 (普通公差になります): ${fitMiss.join('、')}`);
   add('I02', '注記の記入', 'info', P.notes.length > 0, 'project の notes に加工指示を書けます');
   const fits = findFits(solids);

@@ -51,4 +51,28 @@ const interference = {
   'asm': { btn: '#load-asm', theory: {} },
   'asm-fat-pin': { btn: '#load-asm', replace: ['diameter: 7.99', 'diameter: 8.4'], theory: { 'A1/body|A2/shaft': Math.PI * (4.2 * 4.2 - 16) * 10, 'A1/body|A3/shaft': Math.PI * (4.2 * 4.2 - 16) * 10 } },
 };
-module.exports = { cases, samples, interference, head };
+
+// 部品ごとの融合のケース (test22.js)。 理論値は、融合の前 (立体ごとの合計)・後の体積と、後の表面積 (手計算)。
+// parts: 部品の数 / solids: 融合のあとの立体の数 (離れた立体は別のまま)。 サンプルは、数と「前後で体積が変わらない」ことだけ確かめる
+const cylV = (r, h) => Math.PI * r * r * h;
+const frusV = (R, r, h) => (Math.PI * h / 3) * (R * R + R * r + r * r);
+const cylChV = (r, h, c) => cylV(r, h) - (cylV(r, c) - frusV(r, r - c, c)); // 上端 C 面取り
+const cylChA = (r, h, c) => 2 * Math.PI * r * (h - c) + Math.PI * r * r + Math.PI * (r - c) ** 2 + Math.PI * (2 * r - c) * c * Math.SQRT2;
+const cboreThroughA = (d, D, cd, H) => { const r = d / 2, R = D / 2; return -Math.PI * R * R + Math.PI * D * cd + Math.PI * (R * R - r * r) + Math.PI * d * (H - cd) - Math.PI * r * r; };
+const bodyV = 40 * 40 * 12 - (cylV(3.3, 12) + cylV(5.5, 6.5) - cylV(3.3, 6.5));
+const bodyA = 2 * (1600 + 480 + 480) + cboreThroughA(6.6, 11, 6.5, 12);
+const fusion = {
+  'touch-boss': { yaml: head + '  - box: {name: a, size: [60, 40, 10]}\n  - cylinder: {name: c, diameter: 20, height: 15, at: [30, 20, 10]}\n',
+    parts: 1, solids: 1, before: 24000 + cylV(10, 15), after: 24000 + cylV(10, 15), area: 2 * (2400 + 600 + 400) + 2 * Math.PI * 10 * 15 + Math.PI * 100 - Math.PI * 100 },
+  'overlap-boxes': { yaml: interference['box-box'].yaml, parts: 1, solids: 1, before: 20000, after: 19500, area: 6000 },
+  'overlap-cyl': { yaml: interference.lens.yaml, parts: 1, solids: 1, before: 2 * cylV(10, 20), after: 2 * cylV(10, 20) - lens },
+  'disjoint': { yaml: head + '  - box: {name: a, size: [20, 20, 10]}\n  - box: {name: b, size: [20, 20, 10], at: [50, 0, 0]}\n', parts: 1, solids: 2, before: 8000, after: 8000, area: 3200, warn: true },
+  'asm-bolt': { yaml: boltAsm(10.5), parts: 2, solids: 2,
+    before: bodyV + cylChV(5.25, 6, 0.5) + cylV(3.2, 20), after: bodyV + cylChV(5.25, 6, 0.5) + cylV(3.2, 20),
+    area: bodyA + cylChA(5.25, 6, 0.5) + (2 * Math.PI * 3.2 * 20 + 2 * Math.PI * 3.2 * 3.2) - 2 * Math.PI * 3.2 * 3.2 },
+  'sample': { yaml: null, parts: 1, solids: 1, before: 50000 - 2 * cylV(4, 10) + cylV(10, 15), after: 50000 - 2 * cylV(4, 10) + cylV(10, 15),
+    area: 2 * (5000 + 1000 + 500) + 2 * (-2 * Math.PI * 16 + Math.PI * 8 * 10) + 2 * Math.PI * 10 * 15 },
+  'asm': { btn: '#load-asm', parts: 3, solids: 3 },
+  'feat': { btn: '#load-feat', parts: 1, solids: 1 },
+};
+module.exports = { cases, samples, interference, fusion, head, boltAsm };

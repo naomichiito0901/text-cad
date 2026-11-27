@@ -125,7 +125,8 @@ THEORY = {
     'cyl': (cyl_ch(10, 30, 2, 3), cyl_area(10, 30, ('c', 2), ('c', 3))),
     # 板 120x60x12 (角R6) + 座ぐり + 皿 + 止まり穴 と、φ16x20 の円柱 (上端 C1.5) が別の立体
     'combo': ((120 * 60 - (4 - pi) * 36) * 12 - (cyl(3.3, 12) + cyl(5.5, 6.5) - cyl(3.3, 6.5)) - csk_vol(5.5, 10.4, 90, 12) - cyl(4, 8) + cyl_ch(8, 20, 1.5, 0),
-              rr_area(120, 60, 6, 12) + cbore_area(6.6, 11, 6.5, None, 12) + csk_area(5.5, 10.4, 90, None, 12) + hole_blind(8, 8) + cyl_area(8, 20, ('c', 1.5), None)),
+              # 融合後: 円柱の底の円 (r8) と、板の上面の同じ円がなくなる (2 つ分)
+              rr_area(120, 60, 6, 12) + cbore_area(6.6, 11, 6.5, None, 12) + csk_area(5.5, 10.4, 90, None, 12) + hole_blind(8, 8) + cyl_area(8, 20, ('c', 1.5), None) - 2 * pi * 64),
     'thread': (7600 * 0 + 60 * 40 * 14 - cyl(2.5, 14) - cyl(3.4, 13), box7600 + hole_through(5, 14) + hole_blind(6.8, 13)),
     'tilt': (60 * 40 * 14 - cyl(3, 14) / cos(30) - cyl(2.5, 14) / cos(20), box7600 + tilt_area(6, 14, 30) + tilt_area(5, 14, 20)),
     'tilt2': (60 * 40 * 14 - cyl(3, 14) / cos(25) - cyl(2.5, 14) / cos(40), box7600 + tilt_area(6, 14, 25) + tilt_area(5, 14, 40)),
@@ -139,7 +140,9 @@ THEORY = {
     'mix': (knob_volume(ct=2, fb=3), cyl_area(10, 30, ('c', 2), ('f', 3))),
     'big': (knob_volume(ft=9.5, fb=9.5), cyl_area(10, 30, ('f', 9.5), ('f', 9.5))),
 }
-CASES = list(THEORY) + ['sample', 'asm', 'feat', 'holes']
+# アプリのサンプル (板 100x50x10 に φ8 の貫通穴 2 つ + ボス φ20 x 15): 融合後、ボスの底の円 (r10) と板の上面の同じ円がなくなる
+THEORY['sample'] = (50000 - 2 * cyl(4, 10) + cyl(10, 15), 2 * (100 * 50 + 100 * 10 + 50 * 10) + 2 * (-2 * pi * 16 + pi * 8 * 10) + 2 * pi * 10 * 15 + pi * 100 - pi * 100 + 0)
+CASES = list(THEORY) + ['asm', 'feat', 'holes']
 
 
 def load(fn):
@@ -175,24 +178,36 @@ def stl(fn):
     return vol, sum(1 for (a, b), c in E.items() if E.get((b, a), 0) != c)
 
 
+SCHEMA = {'AP242': 'AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF', 'AP214': 'AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'}
 ok = True
-print('体積・面積は mm³・mm²。 「理論」の列は、理論式との相対差')
-print(f"{'case':8} {'有効':4} {'立体':3} {'面':3} {'体積':>10} {'面積':>10} {'STL水密':>7} {'STL体積差':>9} | {'理論体積差':>9} {'理論面積差':>9}")
+print('体積・面積は mm³・mm²。 「理論」の列は、理論式との相対差。 立体 = STEP の中の立体の数 (部品ごとに融合したあと)')
+print(f"{'case':8} {'形式':5} {'有効':4} {'部品':3} {'立体':3} {'面':3} {'体積':>10} {'面積':>10} {'STL水密':>7} {'STL体積差':>9} | {'理論体積差':>9} {'理論面積差':>9} | スキーマ")
 for k in CASES:
-    shp = load(S + f'k_{k}.step')
-    v, a = props(shp)
-    sv, um = stl(S + f'k_{k}.stl')
-    r = dict(valid=BRepCheck_Analyzer(shp).IsValid(), solids=count(shp, TopAbs_SOLID), faces=count(shp, TopAbs_FACE), vol=v, area=a, um=um, stlerr=abs(sv - v) / v)
-    good = r['valid'] and r['um'] == 0 and r['stlerr'] < 0.005
-    tail = ''
-    th = THEORY.get(k)
-    if th:
-        ev, ea = abs(v - th[0]) / th[0], abs(a - th[1]) / th[1]
-        good = good and ev < 1e-4 and ea < 1e-4
-        tail = f" | {ev * 100:8.4f}% {ea * 100:8.4f}%"
-    ok &= good
-    print(f"{k:8} {str(r['valid']):4} {r['solids']:3d} {r['faces']:3d} {r['vol']:10.2f} {r['area']:10.2f} {r['um']:7d} {r['stlerr'] * 100:8.4f}%{tail}")
-    if not good:
-        print(f'   ^^^ {k}: 不一致あり')
+    parts = json.load(open(S + f'k_{k}.json'))
+    n_expect = sum(p['solids'] for p in parts)  # 融合のあとの立体の数 (離れた立体は別のまま)
+    for fmt, fn in (('AP242', f'k_{k}.step'), ('AP214', f'k_{k}_214.step')):
+        shp = load(S + fn)
+        v, a = props(shp)
+        text = open(S + fn).read()
+        schema_ok = SCHEMA[fmt] in text.replace('\n', ' ') and (fmt == 'AP214' or True)
+        r = dict(valid=BRepCheck_Analyzer(shp).IsValid(), solids=count(shp, TopAbs_SOLID), faces=count(shp, TopAbs_FACE), vol=v, area=a)
+        good = r['valid'] and r['solids'] == n_expect and schema_ok
+        # 融合の前後で体積が変わらない (面で接しているだけの立体)
+        good = good and all(abs(p['volume'] - p['volumeBefore']) / p['volumeBefore'] < 1e-9 for p in parts)
+        um, stlerr = '', ''
+        if fmt == 'AP242':
+            sv, um_ = stl(S + f'k_{k}.stl')
+            um, stlerr = um_, abs(sv - v) / v
+            good = good and um_ == 0 and stlerr < 0.005
+        tail = ''
+        th = THEORY.get(k)
+        if th:
+            ev, ea = abs(v - th[0]) / th[0], abs(a - th[1]) / th[1]
+            good = good and ev < 1e-4 and ea < 1e-4
+            tail = f"{ev * 100:8.4f}% {ea * 100:8.4f}%"
+        ok &= good
+        print(f"{k if fmt == 'AP242' else '':8} {fmt:5} {str(r['valid']):4} {len(parts):3d} {r['solids']:3d} {r['faces']:3d} {r['vol']:10.2f} {r['area']:10.2f} {um!s:>7} {(f'{stlerr * 100:.4f}%' if stlerr != '' else ''):>9} | {tail:>19} | {'一致' if schema_ok else '不一致'}")
+        if not good:
+            print(f'   ^^^ {k} ({fmt}): 不一致あり')
 print('ALL OK:', ok)
 sys.exit(0 if ok else 1)
