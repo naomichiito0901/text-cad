@@ -1,4 +1,4 @@
-const { chromium } = require('playwright');
+const { launch } = require('./browser');
 const S = require('path').join(process.env.CAD_OUT || '/tmp/cad-out', '/'); require('fs').mkdirSync(S, { recursive: true });
 const head = 'mode: 3d\ndomain: mechanical\nproject: {title: 形状, drawing_no: F-1, material: SS400, designer: a, drafter: b, date: 2026-11-25, rev: A}\nparts:\n';
 const cases = {
@@ -11,7 +11,7 @@ const cases = {
   combo: head + '  - box: {name: p, size: [120, 60, 12], corner_radius: 6}\n  - hole: {target: p, diameter: 6.6, at: [12, 12], cbore_d: 11, cbore_depth: 6.5}\n  - hole: {target: p, diameter: 5.5, at: [108, 48], csk_d: 10.4}\n  - hole: {target: p, diameter: 8, at: [60, 30], depth: 8}\n  - cylinder: {name: c, diameter: 16, height: 20, at: [85, 30, 12], chamfer: 1.5}\n',
 };
 (async () => {
-  const b = await chromium.launch({ args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const b = await launch();
   const p = await (await b.newContext({ viewport: { width: 1300, height: 800 }, acceptDownloads: true })).newPage();
   const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
   await p.goto('file://' + require('path').resolve(__dirname, '../dist/index.html')); await p.waitForTimeout(400);

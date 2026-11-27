@@ -1,0 +1,23 @@
+# 改行は LF に統一する (macOS・Windows・CI で差が出ないようにする)
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.py   text eol=lf
+*.js   text eol=lf
+*.json text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.html text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+
+LICENSE                text eol=lf
+THIRD_PARTY_LICENSES   text eol=lf
+.gitignore             text eol=lf
+.gitattributes         text eol=lf
+
+# バイナリ (今後 WASM などを置く場合)
+*.wasm binary
+*.gz   binary
+*.zip  binary
+*.png  binary
