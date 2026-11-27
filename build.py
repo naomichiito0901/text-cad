@@ -55,7 +55,7 @@ wasm_gz = gzip.compress((occt / "replicad_single.wasm").read_bytes(), 9, mtime=0
 # ---- アプリ本体 -----------------------------------------------------------------
 licenses = read(root / "LICENSE").strip() + "\n\n" + "=" * 60 + "\n\n" + read(root / "THIRD_PARTY_LICENSES").strip() + "\n"
 app = "(function () {\n'use strict';\n" + "\n".join(
-    read(root / "src" / f) for f in ("core.js", "workflow.js", "arch.js", "section.js", "kernel.js", "ui.js")
+    read(root / "src" / f) for f in ("core.js", "workflow.js", "arch.js", "section.js", "kernel.js", "kernel-model.js", "ui.js")
 ) + "\n})();\n"
 parts = {
     "/*__LICENSES__*/": licenses,

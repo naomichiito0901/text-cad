@@ -14,7 +14,7 @@ const cases = {
   const errs = [];
   p.on('pageerror', (e) => errs.push(e.message));
   p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
-  await p.goto('file://' + require('path').resolve(__dirname, '../dist/index.html'));
+  await p.goto('file://' + require('path').resolve(__dirname, '../dist-offline/index.html'));
   await p.waitForTimeout(400);
   await p.click('[data-step="2"]');
   for (const [k, y] of Object.entries(cases)) {

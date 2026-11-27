@@ -6,7 +6,7 @@ const S = require('path').join(process.env.CAD_OUT || '/tmp/cad-out', '/'); requ
   const errs = [];
   p.on('pageerror', (e) => errs.push(e.message));
   p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
-  await p.goto('file://' + require('path').resolve(__dirname, '../dist/index.html'));
+  await p.goto('file://' + require('path').resolve(__dirname, '../dist-offline/index.html'));
   await p.waitForTimeout(400);
   const st = async () => (await p.textContent('#status')) + ' | err:' + ((await p.textContent('#error')) || '-');
   for (const [name, btn] of [['holes', '#load-holes']]) {

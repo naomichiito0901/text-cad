@@ -296,8 +296,8 @@ function buildMechWF(spec, scene) {
       <p class="muted">配置: ${asm.insts.map((i) => `${E(i.id)}=${E(i.part)}${i.rotate ? ` (${i.rotate}°)` : ''}`).join(' / ')}</p>` : ''}
       <h3>形状サマリ</h3><p>直方体 ${mech.boxes.length} / 円柱 ${mech.cyls.length} / 穴 ${holes} ／ 外形 ${fmt(d0.bbox.W)} × ${fmt(d0.bbox.D)} × ${fmt(d0.bbox.H)} mm</p>`,
     exports: mkExports(base, project, rules, d0, [
-      { id: 'step', label: '3D STEP', name: `${base}_model.step`, mime: 'model/step', data: () => toSTEP(solids, project, `${base}_model.step`) },
-      { id: 'stl', label: '3D STL', name: `${base}_model.stl`, mime: 'model/stl', data: () => toSTL(meshes) },
+      { id: 'step', label: '3D STEP', name: `${base}_model.step`, mime: 'model/step', kernel: 'step', data: () => toSTEP(solids, project, `${base}_model.step`) },
+      { id: 'stl', label: '3D STL', name: `${base}_model.stl`, mime: 'model/stl', kernel: 'stl', data: () => toSTL(meshes) },
       ...(bom ? [{ id: 'bom', label: '部品表 CSV', name: `${base}_bom.csv`, mime: 'text/csv', data: () => bomCSV(bom, project) }] : []),
     ], bom, false),
     zipDesc: `全図面の DXF / SVG(印刷してPDF化可) / 3D モデル STEP・STL${bom ? ' / 部品表 CSV' : ''} / 検図レポート / 案件ファイル(YAML) / 改訂履歴`,
@@ -603,16 +603,26 @@ $('dl-svg').addEventListener('click', () => {
   else saveText(modelName() + '.svg', toSVGFile(cur.prims), 'image/svg+xml');
 });
 $('dl-print').addEventListener('click', () => wf && printSheet(cur && cur.dw ? cur.dw.d : wf.drawing));
-const saveExport = (id) => { const x = wf && wf.exports.find((e) => e.id === id); if (x) saveText(x.name, x.data(), x.mime); };
+// 出力の中身を作る。 3D モデル (STEP / STL) は計算エンジンで作る (読み込み中は待つ。 使えなければ旧実装)
+async function exportData(x) {
+  if (x.kernel && wf) {
+    const r = await kernelOrOld(wf, x.name, x.kernel, x.data);
+    if (r.engine === 'old') setError('計算エンジンが使えないため、旧実装の形式で出力しました');
+    return r.data;
+  }
+  return x.data();
+}
+const saveExport = async (id) => { const x = wf && wf.exports.find((e) => e.id === id); if (x) saveText(x.name, await exportData(x), x.mime); };
 $('dl-step').addEventListener('click', () => saveExport('step'));
 $('dl-ifc').addEventListener('click', () => saveExport('ifc'));
 $('dl-stl').addEventListener('click', () => {
+  if (inFlow() && wf.domain === 'mechanical') return saveExport('stl'); // 機械部品は計算エンジンの STL
   const meshes = inFlow() ? wf.meshes : cur && cur.meshes;
   if (meshes) saveText(modelName() + '.stl', toSTL(meshes), 'model/stl');
 });
 
 /* 工程パネル内の操作 (イベント委譲) */
-panel.addEventListener('click', (e) => {
+panel.addEventListener('click', async (e) => {
   const t = e.target.closest('button');
   if (!t || t.disabled) return;
   if (t.dataset.goto) return goStep(+t.dataset.goto);
@@ -643,7 +653,7 @@ panel.addEventListener('click', (e) => {
         { name: `${base}${dw.suffix}.dxf`, data: toDXF(dw.d.prims) },
         { name: `${base}${dw.suffix}.svg`, data: sheetSVG(dw.d) },
       ]),
-      ...wf.exports.map((x) => ({ name: x.name, data: x.data() })),
+      ...(await Promise.all(wf.exports.map(async (x) => ({ name: x.name, data: await exportData(x) })))),
       { name: 'LICENSES.txt', data: LICENSES },
       { name: 'README.txt', data: `納品パッケージ ${base}\n図番: ${P.drawing_no}  版: ${P.rev}\n\n${wf.readme}` },
     ];
@@ -710,6 +720,6 @@ Kernel.onStatus((st) => {
 setTimeout(() => Kernel.start().catch(() => {}), 0); // 先に画面を描いてから読み込みを始める
 window.__cad = {
   kernel: Kernel,
-  run, goStep, toSTEP, get cur() { return cur; }, get wf() { return wf; }, store, toDXF, toSTL, makeZip,
+  run, goStep, toSTEP, kernelExport, kernelModelOf, get cur() { return cur; }, get wf() { return wf; }, store, toDXF, toSTL, makeZip,
   checkInterference, parseMech, solidsOf, buildDrawing, sectionGroups, jscad: jscadModeling, build3dMech, conformPolys, buildScene, jsyaml,
 };

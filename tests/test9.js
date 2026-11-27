@@ -14,7 +14,7 @@ const cases = {
   const b = await launch();
   const p = await (await b.newContext({ viewport: { width: 1300, height: 800 }, acceptDownloads: true })).newPage();
   const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
-  await p.goto('file://' + require('path').resolve(__dirname, '../dist/index.html')); await p.waitForTimeout(400);
+  await p.goto('file://' + require('path').resolve(__dirname, '../dist-offline/index.html')); await p.waitForTimeout(400);
   await p.click('[data-step="2"]');
   for (const [k, y] of Object.entries(cases)) {
     await p.fill('#editor', y); await p.waitForTimeout(900);
