@@ -50,7 +50,7 @@ const S = require('path').join(process.env.CAD_OUT || '/tmp/cad-out', '/'); requ
   console.log('step4 minimal:', await st());
   await p.click('#about-open'); await p.waitForTimeout(200);
   const about = await p.textContent('#about-text');
-  const aboutOk = ['MIT License', 'three', 'js-yaml', '@jscad/modeling'].every((k) => about.includes(k)) && about.includes('Copyright (c) 2026');
+  const aboutOk = ['MIT License', 'three', 'js-yaml', '@jscad/modeling', 'replicad', 'Open CASCADE', 'LGPL'].every((k) => about.includes(k)) && about.includes('Copyright (c) 2026');
   console.log('about dialog has licenses:', aboutOk);
   if (!aboutOk) errs.push('about dialog: ライセンス文が表示されません');
   console.log('ERRORS', errs);

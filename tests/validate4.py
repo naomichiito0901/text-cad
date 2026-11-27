@@ -11,7 +11,7 @@ ok = True
 for z in ['asm.zip', 'arch.zip']:
     zf = zipfile.ZipFile(S + z)
     ok &= zf.testzip() is None
-    has = 'LICENSES.txt' in zf.namelist() and b'MIT License' in zf.read('LICENSES.txt') and b'three' in zf.read('LICENSES.txt')
+    has = 'LICENSES.txt' in zf.namelist() and b'MIT License' in zf.read('LICENSES.txt') and all(k in zf.read('LICENSES.txt') for k in (b'three', b'replicad', b'Open CASCADE', b'GNU LESSER GENERAL PUBLIC LICENSE'))
     ok &= has
     print('  LICENSES.txt 同梱:', has)
     print(z, len(zf.namelist()), 'files')
