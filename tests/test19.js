@@ -28,7 +28,8 @@ fs.mkdirSync(S, { recursive: true });
     else await p.fill('#editor', initial);
     await p.waitForTimeout(900);
     const err = (await p.textContent('#error')) || '';
-    if (err) { errs.push(`[${k}] ${err}`); continue; }
+    // WebGL が使えないブラウザの「3D 表示できません」は、アプリの想定した案内 (立体の生成には影響しない)
+    if (err && !/WebGL/.test(err)) { errs.push(`[${k}] ${err}`); continue; }
     const out = await p.evaluate(async () => {
       try {
       const wf = window.__cad.wf;
