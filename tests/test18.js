@@ -48,19 +48,19 @@ const results = [];
     await p.goto(url);
     // 読み込み中でも YAML を編集でき、旧実装の描画が更新される
     await p.click('[data-step="2"]');
-    const before = await p.textContent('#status');
     await p.fill('#editor', (await p.inputValue('#editor')).replace(/size: \[100, 50, 10\]/, 'size: [110, 50, 10]'));
     await p.waitForTimeout(700);
-    const after = await p.textContent('#status');
+    // 編集が反映されたかは、表示 (WebGL が無いと 3D 表示は中止される) ではなく、内部のモデルで確かめる
+    const editWorks = await p.evaluate(() => JSON.stringify(window.__cad.wf.solids).includes('"x1":110'));
     const phaseAtEdit = await p.evaluate(() => window.__cad.kernel.state.phase);
     await p.waitForFunction(() => ['ready', 'error'].includes(window.__cad.kernel.state.phase), null, { timeout: 120000 });
     const ms = Date.now() - t0;
     const st = await p.evaluate(() => ({ ...window.__cad.kernel.state }));
     const label = await p.textContent('#kernel-status');
-    const r = { name, phaseAtEdit, phase: st.phase, ms, label, externalRequests: external.length, editWorks: before !== after || /110/.test(after) };
+    const r = { name, phaseAtEdit, phase: st.phase, ms, label, externalRequests: external.length, editWorks };
     if (name === 'web-file') {
       // Web 版を file:// で開いた場合: 計算エンジンは使えないが、アプリは旧実装で動く
-      r.ok = st.phase === 'error' && /使えません/.test(label) && /立体|範囲/.test(after);
+      r.ok = st.phase === 'error' && /使えません/.test(label) && r.editWorks;
     } else {
       r.ok = st.phase === 'ready' && external.length === 0 && (!slow || (phaseAtEdit === 'loading' && r.editWorks));
       if (r.ok) {
