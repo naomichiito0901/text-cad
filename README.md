@@ -54,6 +54,8 @@ bash tests/run_all.sh
 STEP/STL/IFC/DXF の出力検証(`validate1〜4.py`)は、ブラウザに依存しないため chromium のときだけ実行します(`VALIDATE=1` で他のブラウザでも実行)。
 GitHub Actions では、3 つのブラウザで画面テストを実行します。
 
+**Firefox の制約:** GitHub Actions の Firefox は GPU が無く、ソフトウェア描画の設定でも WebGL を作れません。そのため Firefox の回では、WebGL 作成失敗のエラー(メッセージに `WebGL` を含むもの)だけを無視します。3D 表示そのものは Chromium(ソフトウェア描画)と WebKit で検証し、Firefox では図面・検図・出力など WebGL に依らない部分を検証します。無視せずに実行するには `STRICT_WEBGL=1` を付けます。
+
 ```bash
 BROWSER=firefox bash tests/run_all.sh
 ```
