@@ -106,6 +106,9 @@ tr.row-error td { background: #fff7f7; } tr.row-warn td { background: #fffbeb; }
 @media (max-width: 800px) {
   main { grid-template-columns: 1fr; grid-template-rows: minmax(260px, 45%) minmax(380px, 1fr); overflow: auto; }
 }
+#kernel-status { font-size: 12px; color: #4b5563; white-space: nowrap; }
+#kernel-status[data-phase="ready"] { color: #15803d; }
+#kernel-status[data-phase="error"] { color: #b45309; }
 dialog#about { width: min(720px, 92vw); max-height: 80vh; border: 1px solid #b8c0cc; border-radius: 8px; padding: 16px; }
 dialog#about pre { max-height: 52vh; overflow: auto; font-size: 11px; white-space: pre-wrap; background: #f6f8fa; padding: 8px; }
 </style>
@@ -132,11 +135,13 @@ dialog#about pre { max-height: 52vh; overflow: auto; font-size: 11px; white-spac
   <button id="proj-save" title="入力・版・承認をファイルに保存">案件を保存</button>
   <button id="proj-open">案件を開く</button>
   <input id="proj-file" type="file" accept=".json,application/json" hidden>
+  <span id="kernel-status" role="status" data-phase="idle">計算エンジン: 待機中</span>
   <button id="about-open" title="ライセンス・第三者ソフトウェア">情報</button>
 </header>
 <dialog id="about">
   <h2>情報</h2>
   <p>テキスト → CAD。入力した内容はブラウザの中だけで処理され、外部には送信されません。</p>
+  <p id="about-offline" hidden><a href="text-cad-offline.zip" download>オフライン版 (フォルダ配布・zip) をダウンロード</a></p>
   <pre id="about-text"></pre>
   <form method="dialog"><button>閉じる</button></form>
 </dialog>
@@ -166,6 +171,8 @@ dialog#about pre { max-height: 52vh; overflow: auto; font-size: 11px; white-spac
     <div class="hint"><span>2D: ホイール=拡大縮小 / ドラッグ=移動 / ダブルクリック=全体表示</span><span>3D: ドラッグ=回転 / 右ドラッグ・Shift+ドラッグ=移動 / ホイール=拡大縮小</span></div>
   </section>
 </main>
+<script>window.__KERNEL_MODE = '__KERNEL_MODE__';</script>
+<script type="text/plain" id="kernel-worker-src">/*__KERNEL_WORKER__*/</script>
 <script type="text/plain" id="licenses-text">/*__LICENSES__*/</script>
 <script>/*__JSYAML__*/</script>
 <script>/*__THREE__*/</script>

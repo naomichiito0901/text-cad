@@ -237,7 +237,7 @@ try { const raw = localStorage.getItem(KEY); if (raw) restore(JSON.parse(raw)); 
 /* ---------- ワークフロー計算 (分野ごとのアダプタ) ---------- */
 const WF_DOMAINS = new Set(['mechanical', 'architecture']);
 const LICENSES = ($('licenses-text') ? $('licenses-text').textContent : '').trim();
-$('about-open').addEventListener('click', () => { $('about-text').textContent = LICENSES; $('about').showModal(); });
+$('about-open').addEventListener('click', () => { $('about-text').textContent = LICENSES; $('about-offline').hidden = Kernel.mode !== 'web'; $('about').showModal(); });
 const baseOf = (project) => `${(project.drawing_no || 'drawing').replace(/[^\w.-]+/g, '_')}_Rev${project.rev || 'X'}`;
 function revRowsOf(project) {
   const rows = store.history.map((h) => ({ rev: h.rev, date: h.date, note: h.note }));
@@ -699,7 +699,17 @@ $('proj-file').addEventListener('change', async (e) => {
 if (window.ResizeObserver) new ResizeObserver(resize3d).observe($('wrap3d'));
 ed.value = texts[slot];
 run();
+
+/* 計算エンジン (OpenCascade) の読み込み表示。 読み込み中も YAML は編集できる */
+Kernel.onStatus((st) => {
+  const el = $('kernel-status');
+  el.textContent = st.text;
+  el.dataset.phase = st.phase;
+  el.title = st.detail || (st.phase === 'ready' ? 'OpenCascade (WASM) が使えます' : '');
+});
+setTimeout(() => Kernel.start().catch(() => {}), 0); // 先に画面を描いてから読み込みを始める
 window.__cad = {
+  kernel: Kernel,
   run, goStep, toSTEP, get cur() { return cur; }, get wf() { return wf; }, store, toDXF, toSTL, makeZip,
   checkInterference, parseMech, solidsOf, buildDrawing, sectionGroups, jscad: jscadModeling, build3dMech, conformPolys, buildScene, jsyaml,
 };
