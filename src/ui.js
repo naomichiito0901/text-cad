@@ -296,7 +296,7 @@ function buildMechWF(spec, scene) {
       <p class="muted">配置: ${asm.insts.map((i) => `${E(i.id)}=${E(i.part)}${i.rotate ? ` (${i.rotate}°)` : ''}`).join(' / ')}</p>` : ''}
       <h3>形状サマリ</h3><p>直方体 ${mech.boxes.length} / 円柱 ${mech.cyls.length} / 穴 ${holes} ／ 外形 ${fmt(d0.bbox.W)} × ${fmt(d0.bbox.D)} × ${fmt(d0.bbox.H)} mm</p>`,
     exports: mkExports(base, project, rules, d0, [
-      { id: 'step', label: '3D STEP', name: `${base}_model.step`, mime: 'model/step', kernel: 'step', data: () => toSTEP(solids, project, `${base}_model.step`) },
+      { id: 'step', label: '3D STEP', name: `${base}_model.step`, mime: 'model/step', kernel: 'step', data: null }, // STEP は計算エンジンだけで作る
       { id: 'stl', label: '3D STL', name: `${base}_model.stl`, mime: 'model/stl', kernel: 'stl', data: () => toSTL(meshes) },
       ...(bom ? [{ id: 'bom', label: '部品表 CSV', name: `${base}_bom.csv`, mime: 'text/csv', data: () => bomCSV(bom, project) }] : []),
     ], bom, false),
@@ -603,16 +603,23 @@ $('dl-svg').addEventListener('click', () => {
   else saveText(modelName() + '.svg', toSVGFile(cur.prims), 'image/svg+xml');
 });
 $('dl-print').addEventListener('click', () => wf && printSheet(cur && cur.dw ? cur.dw.d : wf.drawing));
-// 出力の中身を作る。 3D モデル (STEP / STL) は計算エンジンで作る (読み込み中は待つ。 使えなければ旧実装)
+// 出力の中身を作る。 3D モデル (STEP / STL) は計算エンジンで作る (読み込み中は待つ)。
+// 計算エンジンが使えないとき、STL は旧実装 (JSCAD のメッシュ) で作る。 STEP は作れないので null を返す
 async function exportData(x) {
   if (x.kernel && wf) {
     const r = await kernelOrOld(wf, x.name, x.kernel, x.data);
     if (r.engine === 'old') setError('計算エンジンが使えないため、旧実装の形式で出力しました');
+    else if (r.engine === 'none') setError('3D モデル (STEP) は計算エンジンで作ります。 計算エンジンを読み込めなかったため出力できません。 ページを読み込み直してください');
     return r.data;
   }
   return x.data();
 }
-const saveExport = async (id) => { const x = wf && wf.exports.find((e) => e.id === id); if (x) saveText(x.name, await exportData(x), x.mime); };
+const saveExport = async (id) => {
+  const x = wf && wf.exports.find((e) => e.id === id);
+  if (!x) return;
+  const data = await exportData(x);
+  if (data != null) saveText(x.name, data, x.mime);
+};
 $('dl-step').addEventListener('click', () => saveExport('step'));
 $('dl-ifc').addEventListener('click', () => saveExport('ifc'));
 $('dl-stl').addEventListener('click', () => {
@@ -640,6 +647,13 @@ panel.addEventListener('click', async (e) => {
   } else if (act === 'revoke') {
     store.approval = null; persist(); present();
   } else if (act === 'zip') {
+    // 3D モデル (STEP・STL) を先に作る。 作れなければ、版の確定 (改訂履歴への記録) をする前に止める
+    const model3d = new Map();
+    for (const x of wf.exports.filter((e) => e.kernel)) {
+      const data = await exportData(x);
+      if (data == null) return setError('3D モデル (STEP) を作れないため、納品パッケージを作成できません。 ページを読み込み直してください');
+      model3d.set(x.id, data);
+    }
     const d = delivered();
     if (!d) {
       store.history.push({ rev: P.rev || '-', date: todayStr(), note: store.pendingNote || '初版', by: store.approval.by, hash: wf.hash });
@@ -653,7 +667,7 @@ panel.addEventListener('click', async (e) => {
         { name: `${base}${dw.suffix}.dxf`, data: toDXF(dw.d.prims) },
         { name: `${base}${dw.suffix}.svg`, data: sheetSVG(dw.d) },
       ]),
-      ...(await Promise.all(wf.exports.map(async (x) => ({ name: x.name, data: await exportData(x) })))),
+      ...wf.exports.map((x) => ({ name: x.name, data: model3d.has(x.id) ? model3d.get(x.id) : x.data() })),
       { name: 'LICENSES.txt', data: LICENSES },
       { name: 'README.txt', data: `納品パッケージ ${base}\n図番: ${P.drawing_no}  版: ${P.rev}\n\n${wf.readme}` },
     ];
@@ -720,6 +734,6 @@ Kernel.onStatus((st) => {
 setTimeout(() => Kernel.start().catch(() => {}), 0); // 先に画面を描いてから読み込みを始める
 window.__cad = {
   kernel: Kernel,
-  run, goStep, toSTEP, kernelExport, kernelModelOf, get cur() { return cur; }, get wf() { return wf; }, store, toDXF, toSTL, makeZip,
+  run, goStep, kernelExport, kernelModelOf, get cur() { return cur; }, get wf() { return wf; }, store, toDXF, toSTL, makeZip,
   checkInterference, parseMech, solidsOf, buildDrawing, sectionGroups, jscad: jscadModeling, build3dMech, conformPolys, buildScene, jsyaml,
 };

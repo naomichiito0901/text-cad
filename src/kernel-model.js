@@ -1,6 +1,6 @@
 // 立体 (solidsOf の結果) を計算エンジンへ渡す記述に変換し、STEP / STL を作る (メインスレッド側)。
 // 穴の段差 (座ぐり・皿穴・止まり) や長穴の位置は、既存の関数 (holeSteps / slotSeg) で求めた値をそのまま渡す。
-// これにより、旧実装 (自作 STEP ライター) と同じ解釈で形状を作る。
+// 図面・干渉チェックと同じ解釈で形状を作るため、穴の形は既存の関数をそのまま使う。
 function kernelModelOf(solids) {
   return solids.map((s) => {
     if (s.kind === 'cyl') {
@@ -39,13 +39,14 @@ async function kernelExport(wf, fileName) {
   return { ...out, step: stepHeader(out.step, wf.project, fileName || 'model.step') };
 }
 
-// 出力ボタン用: 計算エンジンが読み込み中なら待つ。 使えなければ旧実装の出力にする (戻り値の engine で区別)
+// 出力ボタン用: 計算エンジンが読み込み中なら待つ。
+// 使えないとき、oldFn があればそれで作り (engine: 'old')、無ければ data: null を返す (engine: 'none')
 async function kernelOrOld(wf, fileName, what, oldFn) {
   if (Kernel.state.phase === 'idle' || Kernel.state.phase === 'loading') {
-    try { await Kernel.ready; } catch (e) { /* 失敗は下で旧実装に切り替える */ }
+    try { await Kernel.ready; } catch (e) { /* 失敗は下で扱う */ }
   }
   if (Kernel.state.phase === 'ready') {
-    try { return { data: (await kernelExport(wf, fileName))[what], engine: 'kernel' }; } catch (e) { /* 旧実装へ */ }
+    try { return { data: (await kernelExport(wf, fileName))[what], engine: 'kernel' }; } catch (e) { /* 下で扱う */ }
   }
-  return { data: oldFn(), engine: 'old' };
+  return oldFn ? { data: oldFn(), engine: 'old' } : { data: null, engine: 'none' };
 }
