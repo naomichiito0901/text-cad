@@ -1,6 +1,6 @@
 // 立体 (solidsOf の結果) を計算エンジンへ渡す記述に変換し、STEP / STL を作る (メインスレッド側)。
 // 穴の段差 (座ぐり・皿穴・止まり) や長穴の位置は、既存の関数 (holeSteps / slotSeg) で求めた値をそのまま渡す。
-// これにより、旧実装 (自作 STEP ライター) と同じ解釈で形状を作る。
+// 図面・干渉チェックと同じ解釈で形状を作るため、穴の形は既存の関数をそのまま使う。
 function kernelModelOf(solids) {
   return solids.map((s) => {
     if (s.kind === 'cyl') {
