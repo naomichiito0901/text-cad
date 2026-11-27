@@ -4,7 +4,7 @@
 //  - web-file: Web 版を file:// で開いた場合は、エラーにならず案内を出して旧実装で動くこと
 // 確認する内容: 読み込み中も YAML を編集できる / 外部への通信が無い / Worker で計算できる /
 //   STEP・STL・体積が出る (STEP・STL は validate5.py で OpenCascade と理論値に照合する)
-const { launch } = require('./browser');
+const { launch, name: browserName } = require('./browser');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -33,6 +33,7 @@ const results = [];
   const targets = [
     ['offline', 'file://' + path.join(root, 'dist-offline/index.html')],
     ['web', base + 'index.html'],
+    ['offline-main', 'file://' + path.join(root, 'dist-offline/index.html') + '?kernel=main'], // Worker を使わない経路 (Safari の file:// と同じ)
     ['web-slow', base + 'index.html', true], // WASM の取得を遅らせ、読み込み中の編集を確認する
     ['web-file', 'file://' + path.join(root, 'dist/index.html')],
   ];
@@ -66,12 +67,16 @@ const results = [];
       if (r.ok) {
         const out = await p.evaluate(() => window.__cad.kernel.call('selfTest'));
         r.hlr = out.hlr;
+        // Worker で動くこと。 ただし Safari (WebKit) の file:// は Blob の Worker を作れないため、同じスレッドで動く
+        r.threadMode = await p.evaluate(() => window.__cad.kernel.threadMode);
+        const expected = name === 'offline-main' || (browserName === 'webkit' && name === 'offline') ? 'main' : 'worker';
+        if (r.threadMode !== expected) r.ok = false;
         for (const k of ['plate', 'knob']) {
           fs.writeFileSync(S + `kernel_${name}_${k}.step`, out[k].step);
           fs.writeFileSync(S + `kernel_${name}_${k}.stl`, out[k].stl);
           r[k + 'Volume'] = out[k].volume;
         }
-        r.ok = r.hlr === 'function' && r.plateVolume > 0 && r.knobVolume > 0;
+        r.ok = r.ok && r.hlr === 'function' && r.plateVolume > 0 && r.knobVolume > 0;
       }
     }
     results.push(r);

@@ -9,6 +9,8 @@ const Kernel = (() => {
   const listeners = [];
   let state = { phase: 'idle', pct: 0, text: '計算エンジン: 待機中' };
   let worker = null;
+  let send = null;
+  let threadMode = 'none';
   let nextId = 1;
   const pending = new Map();
   let started = false;
@@ -83,14 +85,20 @@ const Kernel = (() => {
     return { wasm, glue, replicad };
   }
 
+  // Safari (WebKit) は file:// で Blob から Worker を作れない。 それ以外は Worker を使う
+  function useWorker() {
+    const safari = /^((?!chrome|chromium|android).)*safari/i.test(navigator.userAgent);
+    const forced = /[?&]kernel=main(&|$)/.test(location.search); // ?kernel=main で同じスレッドで動かす (確認用)
+    return typeof Worker !== 'undefined' && !forced && !(location.protocol === 'file:' && safari);
+  }
+
   async function start() {
     if (started) return ready;
     started = true;
     try {
       const src = await sources();
-      const url = URL.createObjectURL(new Blob([document.getElementById('kernel-worker-src').textContent], { type: 'text/javascript' }));
-      worker = new Worker(url);
-      worker.onmessage = (e) => {
+      const code = document.getElementById('kernel-worker-src').textContent;
+      const onMsg = (e) => {
         const m = e.data;
         if (m.type === 'progress') set('loading', m.stage === '展開中' ? 96 : 98, `計算エンジン: ${m.stage}`);
         else if (m.type === 'ready') { set('ready', 100, '計算エンジン: 準備完了'); resolveReady(true); }
@@ -100,8 +108,20 @@ const Kernel = (() => {
           if (p) (m.ok ? p.res(m.result) : p.rej(new Error(m.error)));
         }
       };
-      worker.onerror = (e) => fail(new Error(e.message || 'Worker のエラー'));
-      worker.postMessage({ type: 'init', wasm: src.wasm, glue: src.glue, replicad: src.replicad }, [src.wasm]);
+      if (useWorker()) {
+        worker = new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
+        worker.onmessage = onMsg;
+        worker.onerror = (e) => fail(new Error(e.message || 'Worker のエラー'));
+        send = (m, tr) => worker.postMessage(m, tr || []);
+        threadMode = 'worker';
+      } else {
+        // Safari は file:// で Blob の Worker を作れない。 同じスレッドで動かす (計算中は画面が止まる)
+        const fake = { onmessage: null, postMessage: (m) => setTimeout(() => onMsg({ data: m }), 0) };
+        new Function('self', code)(fake);
+        send = (m) => setTimeout(() => fake.onmessage({ data: m }), 0);
+        threadMode = 'main';
+      }
+      send({ type: 'init', wasm: src.wasm, glue: src.glue, replicad: src.replicad }, [src.wasm]);
     } catch (err) { fail(err); }
     return ready;
   }
@@ -121,7 +141,7 @@ const Kernel = (() => {
     return new Promise((res, rej) => {
       const id = nextId++;
       pending.set(id, { res, rej });
-      worker.postMessage({ type: 'call', id, op, args });
+      send({ type: 'call', id, op, args });
     });
   }
 
@@ -131,6 +151,7 @@ const Kernel = (() => {
     ready,
     call,
     get state() { return state; },
+    get threadMode() { return threadMode; },
     onStatus(f) { listeners.push(f); f(state); },
   };
 })();

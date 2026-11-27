@@ -51,7 +51,7 @@ def stl(fn):
 
 ok = True
 print(f"{'case':16} {'STEP有効':6} {'体積':>10} {'理論':>10} {'誤差':>8} {'面積':>10} {'理論':>10} {'誤差':>8} {'STL誤差':>8} 非対応辺")
-for target in ('offline', 'web'):
+for target in ('offline', 'offline-main', 'web'):
     for k, (tv, ta) in THEORY.items():
         fn = f'kernel_{target}_{k}'
         r = STEPControl_Reader()

@@ -1,6 +1,8 @@
 // 計算エンジン (OpenCascade WASM + replicad) を動かす Web Worker。
 // このファイルは文字列として index.html に埋め込まれ、Blob から Worker として起動される。
 // (file:// でも動くよう、別ファイルの Worker は使わない)
+// Worker を作れない環境 (Safari の file://) では、この全体を関数として同じスレッドで実行する。
+// そのため `self` だけを使い、`self.replicad` のような Worker 固有の参照は避ける。
 //
 // メッセージ:
 //   main → worker  {type:'init', wasm: ArrayBuffer, glue: string, replicad: string}
@@ -63,7 +65,7 @@ async function init({ wasm, glue, replicad }) {
     },
   });
   (0, eval)(replicad); // UMD。 self.replicad を定義する
-  R = self.replicad;
+  R = globalThis.replicad;
   R.setOC(OC);
 }
 
