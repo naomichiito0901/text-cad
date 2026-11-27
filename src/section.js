@@ -136,14 +136,20 @@ function hatchSegments(loops, ang, spacing) {
   return out;
 }
 
-/* 断面図の図面 (1枚) */
-function buildSectionDrawing(S, proj, revRows, sec, asm) {
+/* 断面図の図面 (1枚)。 data は sectionFor() の結果 (計算エンジンが求めた、部品ごとの断面の輪郭)。
+   まだ求まっていない (pending) / 求められない (unavailable) ときは、その旨を書いた図面を返す */
+function buildSectionDrawing(S, proj, revRows, sec, asm, data) {
   const sh = newSheet(proj), { prims, fl, fr, fb, ft, TBH } = sh;
   const E = archEmit(prims), auto = proj.dimensions === 'auto';
+  if (data.state !== 'done') {
+    const L = sec.label, pj = { ...proj, title: `${proj.title} 断面図 ${L}-${L}`, drawing_no: `${proj.drawing_no}-S${L}` };
+    E.T(data.state === 'pending' ? '断面を計算中です (計算エンジンの読み込みが終わるまでお待ちください)' : '計算エンジンが使えないため、断面図を作れません (ページを読み込み直してください)', (fl + fr) / 2, (fb + ft) / 2, 5, { anchor: 'middle' });
+    sheetDecor(prims, { proj: pj, revRows, scaleStr: scaleText(1), asm, labels: { material: '材質', kind: ['図の種類', '断面図'] } });
+    return { prims, scale: 1, fits: true, need: [], have: [], paper: proj.paper, roughness: [], bbox: { W: 0, D: 0, H: 0 }, title: pj.title, drawing_no: pj.drawing_no, state: data.state };
+  }
   const need = new Set([`sec:${sec.label}:w`, `sec:${sec.label}:h`]), have = new Set();
-  const { geom2 } = jscadModeling.geometries;
-  const groups = sectionGroups(S, sec.plane, sec.at);
-  const loopsOf = groups.map((g) => geom2.toOutlines(g.region).map(collinearReduce).filter((l) => l.length >= 3));
+  const groups = data.groups;
+  const loopsOf = groups.map((g) => g.loops);
   const flat = loopsOf.flat().flat();
   const u0 = Math.min(...flat.map((p) => p[0])), u1 = Math.max(...flat.map((p) => p[0]));
   const v0 = Math.min(...flat.map((p) => p[1])), v1 = Math.max(...flat.map((p) => p[1]));
@@ -202,7 +208,7 @@ function buildSectionDrawing(S, proj, revRows, sec, asm) {
   E.T(`S=${scaleText(s)}  (${sec.plane === 'y' ? `y=${nf(sec.at)} で切断・手前から見る` : `x=${nf(sec.at)} で切断・右から見る`})`, ox + 30, oy - (auto ? 26 : 8), 3.2, { anchor: 'start' });
   const pj = { ...proj, title: `${proj.title} 断面図 ${L}-${L}`, drawing_no: `${proj.drawing_no}-S${L}` };
   sheetDecor(prims, { proj: pj, revRows, scaleStr: scaleText(s), asm, labels: { material: '材質', kind: ['図の種類', '断面図'] } });
-  return { prims, scale: s, fits, need: [...need], have: [...have], paper: proj.paper, roughness: [], bbox: { W: Wb, D: 0, H: Hb }, title: pj.title, drawing_no: pj.drawing_no };
+  return { prims, scale: s, fits, need: [...need], have: [...have], paper: proj.paper, roughness: [], bbox: { W: Wb, D: 0, H: Hb }, title: pj.title, drawing_no: pj.drawing_no, state: 'done' };
 }
 
 /* 平面図(上面図)に切断線を描く: 太い端部・細い一点鎖線・視線方向の矢印・記号 */

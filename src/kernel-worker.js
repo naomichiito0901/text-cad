@@ -108,8 +108,10 @@ function partGroups(model) {
   });
   return [...groups.values()].map((g) => {
     const names = g.idx.map((i) => model[i].name);
-    const name = g.inst !== undefined ? String(g.inst) : names.length <= 3 ? names.join('+') : `${names[0]} 他${names.length - 1}`;
-    return { name, idx: g.idx, members: names };
+    // 部品の名前: メインスレッドが付けた表示名 (YAML の部品名・title)。 無ければ、組立は配置の id、単品は立体の名前をつなぐ
+    const label = model[g.idx[0]].part;
+    const name = label || (g.inst !== undefined ? String(g.inst) : names.length <= 3 ? names.join('+') : `${names[0]} 他${names.length - 1}`);
+    return { name, key: g.inst !== undefined ? g.inst : null, idx: g.idx, members: names };
   });
 }
 // test: テスト用の指定 ({ failFuse: true } で融合を失敗させ、失敗の理由の表示を確かめる)
@@ -122,7 +124,7 @@ function fuseParts(model, shapes, test) {
     } catch (e) {
       throw new Error(`部品「${g.name}」の立体を融合できませんでした (${(e && e.message) || e})`);
     }
-    return { name: g.name, members: g.members, idx: g.idx, shape, solids: shape.solids.length };
+    return { name: g.name, key: g.key, members: g.members, idx: g.idx, shape, solids: shape.solids.length };
   });
 }
 
@@ -177,6 +179,45 @@ const ops = {
       }
     }
     return { hits, parts };
+  },
+  // 断面: 面 (plane: 'y' → y=at、'x' → x=at) で部品ごと (融合した形) に切った断面の輪郭。
+  // 座標は図面の向き (y 面: 横 x・縦 z / x 面: 横 y・縦 z)。 戻り値: 切れた部品ごとの { key, name, faces: [{ outer, holes, area }], area }
+  async section({ model, plane, at }) {
+    const shapes = model.map(makeSolid);
+    const fused = fuseParts(model, shapes);
+    const B = 100000;
+    const pt = (u, v) => (plane === 'y' ? [u, at, v] : [at, u, v]);
+    const makeCutter = () => R.makePolygon([pt(-B, -B), pt(B, -B), pt(B, B), pt(-B, B)]); // 演算で使い切られるので、部品ごとに作る
+    const uv = (v) => (plane === 'y' ? [v.x, v.z] : [v.y, v.z]);
+    const loopOf = (wire) => { // 辺を端点でつないで、1 周の点列にする (曲線は 48 分割)
+      const segs = wire.edges.map((e) => {
+        const n = e.geomType === 'LINE' ? 1 : 48;
+        return Array.from({ length: n + 1 }, (_, k) => uv(e.pointAt(k / n)));
+      });
+      const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6;
+      const loop = segs.shift().slice();
+      while (segs.length) {
+        const end = loop[loop.length - 1];
+        let k = segs.findIndex((q) => near(q[0], end)), rev = false;
+        if (k < 0) { k = segs.findIndex((q) => near(q[q.length - 1], end)); rev = true; }
+        if (k < 0) throw new Error('断面の輪郭がつながりません');
+        const q = segs.splice(k, 1)[0];
+        loop.push(...(rev ? q.slice(0, -1).reverse() : q.slice(1)));
+      }
+      if (near(loop[0], loop[loop.length - 1])) loop.pop();
+      return loop;
+    };
+    const groups = [];
+    for (const p of fused) {
+      let c;
+      try { c = p.shape.intersect(makeCutter()); } catch (e) { continue; } // 切れないとき
+      const faces = c.faces;
+      if (!faces.length) continue;
+      // outerWire()・innerWires() は面を使い切るので、複製して呼ぶ
+      const out = faces.map((f) => ({ area: R.measureArea(f), holes: f.clone().innerWires().map(loopOf), outer: loopOf(f.clone().outerWire()) }));
+      groups.push({ key: p.key, name: p.name, faces: out, area: out.reduce((t, f) => t + f.area, 0) });
+    }
+    return { groups };
   },
   // 立体の記述から、部品ごとに融合した STEP / STL と、部品ごとの体積・表面積・面の数・有効性を返す。
   // format: STEP の形式 (AP242 | AP214)。 融合の前の体積 (volumeBefore) も返す
