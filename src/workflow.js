@@ -116,6 +116,10 @@ function checkInterference(solids) {
       if (cnt) hits.push({ a: a.name, b: b.name, volume: cnt * (dx * dy * dz) / (nxy * nxy * nz), dz });
     }
   }
+  return { hits, floating: floatingParts(solids) };
+}
+// 他の部品と接していない部品 (外形が接していない)。 組立で、どの部品とも外形が触れていないものを返す
+function floatingParts(solids) {
   const floating = [];
   const group = (o) => (o.inst !== undefined ? o.inst : o.name);
   if (new Set(solids.map(group)).size > 1) {
@@ -131,7 +135,7 @@ function checkInterference(solids) {
       done.add(g);
     });
   }
-  return { hits, floating };
+  return floating;
 }
 
 /* ---------- 図枠の共通部品 (機械・建築で共用) ---------- */
@@ -675,8 +679,10 @@ function runChecks(ctx) {
   const dimMiss = drawings.map((dw) => ({ label: dw.label, miss: dw.d.need.filter((k) => !dw.d.have.includes(k)) })).filter((x) => x.miss.length);
   add('E02', '寸法の記入漏れ (形状寸法・穴径・位置寸法)', 'error', !dimMiss.length,
     dimMiss.map((x) => `${x.label}: ${x.miss.length} 件 (${x.miss.slice(0, 4).join(', ')}${x.miss.length > 4 ? ' ...' : ''})`).join(' / '));
-  add('E03', asmInfo ? '部品どうしの干渉 (組立)' : '部品どうしの干渉', 'error', !interference.hits.length,
-    interference.hits.map((h) => `${h.a} × ${h.b} (約 ${Math.round(h.volume).toLocaleString('ja-JP')} mm³)`).join(' / '));
+  add('E03', asmInfo ? '部品どうしの干渉 (組立)' : '部品どうしの干渉', 'error', interference.state === 'done' && !interference.hits.length,
+    interference.state === 'pending' ? '計算エンジンで確認中です'
+      : interference.state === 'unavailable' ? '計算エンジンが使えないため確認できません'
+        : interference.hits.map((h) => `${h.a} × ${h.b} (${h.volume < 10 ? h.volume.toFixed(1) : Math.round(h.volume).toLocaleString('ja-JP')} mm³)`).join(' / '));
   const nofit = drawings.filter((dw) => !dw.d.fits);
   add('E04', '図面が用紙に収まっている', 'error', !nofit.length, `${nofit.map((dw) => dw.label).join('、')}: 尺度 ${nofit[0] ? scaleText(nofit[0].d.scale) : ''} では ${P.paper} に収まりません。用紙か尺度を変更してください`);
   const nonStd = drawings.filter((dw) => !isStdScale(dw.d.scale));
