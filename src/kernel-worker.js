@@ -96,6 +96,49 @@ function makeSolid(m) {
   return s;
 }
 
+// 部品 (組立では inst が同じ立体のまとまり。単品モードは全体で 1 つ) ごとに、立体を 1 つに融合する。
+// 面で接しているだけの立体 (板の上面に載せたボスなど) も、つながっているものとして融合する。
+// 離れていて融合できない立体が部品にあるとき、融合した結果は複数の立体を持つ (別の立体のまま出力する)。
+function partGroups(model) {
+  const groups = new Map();
+  model.forEach((m, i) => {
+    const key = m.inst !== undefined ? 'inst:' + m.inst : 'single';
+    if (!groups.has(key)) groups.set(key, { inst: m.inst, idx: [] });
+    groups.get(key).idx.push(i);
+  });
+  return [...groups.values()].map((g) => {
+    const names = g.idx.map((i) => model[i].name);
+    const name = g.inst !== undefined ? String(g.inst) : names.length <= 3 ? names.join('+') : `${names[0]} 他${names.length - 1}`;
+    return { name, idx: g.idx, members: names };
+  });
+}
+// test: テスト用の指定 ({ failFuse: true } で融合を失敗させ、失敗の理由の表示を確かめる)
+function fuseParts(model, shapes, test) {
+  return partGroups(model).map((g) => {
+    let shape = shapes[g.idx[0]];
+    try {
+      if (test && test.failFuse) throw new Error('テスト用に失敗させました');
+      for (const i of g.idx.slice(1)) shape = shape.fuse(shapes[i]);
+    } catch (e) {
+      throw new Error(`部品「${g.name}」の立体を融合できませんでした (${(e && e.message) || e})`);
+    }
+    return { name: g.name, members: g.members, idx: g.idx, shape, solids: shape.solids.length };
+  });
+}
+
+// STEP の形式。 replicad の書き出しは write.step.schema を 5 (AP242) に固定して設定するので、その設定の値だけ差し替える。
+// OpenCascade の値: 4 = AP214 (IS、AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 })、5 = AP242
+const STEP_SCHEMA = { AP242: 5, AP214: 4 };
+async function exportStepAs(shapes, format) {
+  const want = STEP_SCHEMA[format];
+  if (!want) throw new Error(`STEP の形式は AP242 か AP214 です (${format})`);
+  const IS = R.getOC().Interface_Static, orig = IS.SetIVal;
+  // 差し替えた関数の中で、元の関数を一時的に戻して呼ぶ (embind の関数は、自分自身に紐づく情報を使うため)
+  const patched = function (k, v) { IS.SetIVal = orig; try { return orig.call(IS, k, k === 'write.step.schema' ? want : v); } finally { IS.SetIVal = patched; } };
+  IS.SetIVal = patched;
+  try { return await R.exportSTEP(shapes.map(({ shape, name }) => ({ shape, name }))).text(); } finally { IS.SetIVal = orig; }
+}
+
 function isValid(shape) {
   const oc = R.getOC();
   return new oc.BRepCheck_Analyzer(shape.wrapped, true, false).IsValid();
@@ -105,13 +148,23 @@ function isValid(shape) {
 const ops = {
   // 干渉: 部品どうしの共通部分の体積。 同じ部品 (inst が同じ) の立体どうしは調べない。
   // 面で接するだけ (体積 0) は干渉ではない。 戻り値の i, j は model の番号、 dz は共通部分の高さ
-  async interfere({ model }) {
-    const shapes = model.map(makeSolid);
+  async interfere({ model, byPart = false }) {
+    let shapes = model.map(makeSolid), items = model;
+    // 部品ごとの情報 (離れた立体があるかの確認に使う)。 融合できなくても干渉の確認は続ける
+    let parts = null, fusedParts = null;
+    try {
+      fusedParts = fuseParts(model, shapes);
+      parts = fusedParts.map((p) => ({ name: p.name, solids: p.solids }));
+    } catch (e) { parts = null; }
+    if (byPart && fusedParts) { // 部品ごと (融合した形) の干渉。 確認用
+      shapes = fusedParts.map((p) => p.shape);
+      items = fusedParts.map((p) => ({ name: p.name, inst: p.name }));
+    }
     const bb = shapes.map((s) => s.boundingBox.bounds);
     const hits = [];
     for (let i = 0; i < shapes.length; i++) {
       for (let j = i + 1; j < shapes.length; j++) {
-        if (model[i].inst !== undefined && model[i].inst === model[j].inst) continue;
+        if (items[i].inst !== undefined && items[i].inst === items[j].inst) continue;
         const [a, b] = [bb[i], bb[j]];
         if ([0, 1, 2].some((k) => Math.min(a[1][k], b[1][k]) - Math.max(a[0][k], b[0][k]) <= 1e-7)) continue; // 外形が重ならない
         let volume = 0, dz = 0;
@@ -120,20 +173,25 @@ const ops = {
           volume = R.measureVolume(c);
           if (volume > 1e-3) { const cb = c.boundingBox.bounds; dz = cb[1][2] - cb[0][2]; }
         } catch (e) { volume = 0; } // 共通部分が空のときなど
-        if (volume > 1e-3) hits.push({ i, j, volume, dz });
+        if (volume > 1e-3) hits.push({ i, j, volume, dz, a: items[i].name, b: items[j].name });
       }
     }
-    return { hits };
+    return { hits, parts };
   },
-  // 立体の記述から STEP / STL と、立体ごとの体積・表面積・面の数・有効性を返す
-  async buildModel({ model }) {
-    const shapes = model.map((m) => ({ name: m.name, shape: makeSolid(m) }));
-    const solids = shapes.map(({ name, shape }) => ({
-      name, volume: R.measureVolume(shape), area: R.measureArea(shape), faces: shape.faces.length, valid: isValid(shape),
+  // 立体の記述から、部品ごとに融合した STEP / STL と、部品ごとの体積・表面積・面の数・有効性を返す。
+  // format: STEP の形式 (AP242 | AP214)。 融合の前の体積 (volumeBefore) も返す
+  async buildModel({ model, format = 'AP242', test }) {
+    const shapes = model.map(makeSolid);
+    const before = shapes.map((s) => R.measureVolume(s));
+    const fused = fuseParts(model, shapes, test);
+    const parts = fused.map((p) => ({
+      name: p.name, members: p.members, solids: p.solids,
+      volumeBefore: p.idx.reduce((t, i) => t + before[i], 0), volume: R.measureVolume(p.shape), area: R.measureArea(p.shape),
+      faces: p.shape.faces.length, valid: isValid(p.shape),
     }));
-    const step = stepAscii(await R.exportSTEP(shapes.map(({ shape, name }) => ({ shape, name }))).text());
-    const stl = await R.compoundShapes(shapes.map((x) => x.shape)).blobSTL({ binary: false, tolerance: 0.01, angularTolerance: 0.1 }).text();
-    return { step, stl, solids };
+    const step = stepAscii(await exportStepAs(fused, format));
+    const stl = await R.compoundShapes(fused.map((x) => x.shape)).blobSTL({ binary: false, tolerance: 0.01, angularTolerance: 0.1 }).text();
+    return { step, stl, parts };
   },
   // 動作確認: 体積を理論値と比較できる 2 つの立体を作り、STEP / STL / 体積を返す
   async selfTest() {

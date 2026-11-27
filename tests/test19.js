@@ -35,21 +35,23 @@ fs.mkdirSync(S, { recursive: true });
     else await p.fill('#editor', initial);
     await p.waitForTimeout(900);
     const err = (await p.textContent('#error')) || '';
-    // WebGL が使えないブラウザの「3D 表示できません」は、アプリの想定した案内 (立体の生成には影響しない)
-    if (err && !/WebGL/.test(err)) { errs.push(`[${k}] ${err}`); continue; }
+    if (err) { errs.push(`[${k}] ${err}`); continue; }
     const out = await p.evaluate(async () => {
       try {
         const wf = window.__cad.wf;
         const t0 = performance.now();
         const nw = await window.__cad.kernelExport(wf, 'k.step');
-        return { nw, ms: Math.round(performance.now() - t0), n: wf.solids.length };
+        // 同じ立体を AP214 でも出す (案件情報の step_format: AP214 と同じ指定)
+        const n214 = await window.__cad.kernelExport({ ...wf, project: { ...wf.project, step_format: 'AP214' } }, 'k.step');
+        return { nw, n214: n214.step, ms: Math.round(performance.now() - t0), n: wf.solids.length };
       } catch (e) { return { error: String(e.message || e) }; }
     });
     if (out.error) { errs.push(`[${k}] 計算エンジンの出力に失敗: ${out.error}`); continue; }
     fs.writeFileSync(S + `k_${k}.step`, out.nw.step);
+    fs.writeFileSync(S + `k_${k}_214.step`, out.n214);
     fs.writeFileSync(S + `k_${k}.stl`, out.nw.stl);
-    fs.writeFileSync(S + `k_${k}.json`, JSON.stringify(out.nw.solids));
-    summary.push(`${k}: ${out.n} 立体 / ${out.ms} ms / valid=${out.nw.solids.every((s) => s.valid)}`);
+    fs.writeFileSync(S + `k_${k}.json`, JSON.stringify(out.nw.parts));
+    summary.push(`${k}: ${out.n} 立体 → ${out.nw.parts.length} 部品 / ${out.ms} ms / valid=${out.nw.parts.every((x) => x.valid)}`);
   }
   console.log(summary.join('\n'));
 
@@ -91,7 +93,7 @@ fs.mkdirSync(S, { recursive: true });
   const approveDisabled = await q.isDisabled('[data-act="approve"]');
   const panel5 = (await q.textContent('#panel')) || '';
   const fb = {
-    stepBlocked: !stepDownloaded && /計算エンジンで作ります/.test(stepMsg || ''),
+    stepBlocked: !stepDownloaded && /STEP\) を作れません/.test(stepMsg || ""),
     stlFallback: /^solid cad_text/.test(stlOld),
     approveBlocked: approveDisabled && /計算エンジンが使えないため確認できません/.test(panel5),
   };

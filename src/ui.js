@@ -18,6 +18,7 @@ project:            # 工程1: 案件情報
   standard: JIS B 0001
   general_tolerance: JIS B 0405 中級
   finish: Ra 6.3    # 指示のない面の表面粗さ
+  step_format: AP242  # 3D の STEP の形式: AP242 (標準) / AP214
   rev: A
   notes:
     - 指示なきC面取りは C0.5
@@ -178,6 +179,7 @@ const HELP = {
   mechanical: `project:  title / drawing_no / material / designer / drafter / date / due
           paper(A3|A4) / scale(auto|1:2) / standard / general_tolerance
           finish / rev / notes(- 注記)
+          step_format(AP242|AP214。3D の STEP の形式。省略は AP242)
 box:      {name, size: [幅, 奥行, 高さ], at: [x, y, z], tol, finish,
            corner_radius: 角R, chamfer: 上面外周のC, chamfer_bottom: 下面のC}
 cylinder: {name, diameter, height, at: [x, y, z], tol, finish,
@@ -420,10 +422,10 @@ const E = esc;
 const chip = (ok, okText, ngText, cls = 'ng') => (ok ? `<span class="chip ok">✓ ${E(okText)}</span>` : `<span class="chip ${cls}">${E(ngText)}</span>`);
 function panel1() {
   const P = wf.project, d = wf.drawing;
-  const rows = PROJECT_FIELDS.filter(([k]) => !(wf.domain === 'architecture' && ['general_tolerance', 'finish'].includes(k))).map(([k, label]) => {
+  const rows = PROJECT_FIELDS.filter(([k]) => !(wf.domain === 'architecture' && ['general_tolerance', 'finish', 'step_format'].includes(k))).map(([k, label]) => {
     const req = reqKeys().includes(k), v = P[k];
     const lab = wf.domain === 'architecture' && k === 'material' ? '構造' : label;
-    return `<tr><th>${E(lab)}</th><td>${v ? E(v) : '<span class="muted">—</span>'}</td><td>${req ? '<span class="tag">必須</span>' : '<span class="tag soft">推奨</span>'}</td><td>${v ? '<span class="chip ok">✓</span>' : `<span class="chip ${req ? 'ng' : 'warn'}">未記入</span>`}</td></tr>`;
+    return `<tr><th>${E(lab)}</th><td>${v ? E(v) : '<span class="muted">—</span>'}</td><td>${k === 'step_format' ? '<span class="tag soft">任意</span>' : req ? '<span class="tag">必須</span>' : '<span class="tag soft">推奨</span>'}</td><td>${v ? '<span class="chip ok">✓</span>' : `<span class="chip ${req ? 'ng' : 'warn'}">未記入</span>`}</td></tr>`;
   }).join('');
   return `<h2>工程1 要件・案件情報の確認</h2>
   <p class="muted">指示書の内容を、左の入力欄の <code>project:</code> に記入します。必須項目が揃うと次工程へ進めます。</p>
@@ -625,8 +627,8 @@ $('dl-print').addEventListener('click', () => wf && printSheet(cur && cur.dw ? c
 async function exportData(x) {
   if (x.kernel && wf) {
     const r = await kernelOrOld(wf, x.name, x.kernel, x.data);
-    if (r.engine === 'old') setError('計算エンジンが使えないため、旧実装の形式で出力しました');
-    else if (r.engine === 'none') setError('3D モデル (STEP) は計算エンジンで作ります。 計算エンジンを読み込めなかったため出力できません。 ページを読み込み直してください');
+    if (r.engine === 'old') setError(`計算エンジンで作れなかったため、旧実装の形式で出力しました (${r.reason})`);
+    else if (r.engine === 'none') setError(`3D モデル (STEP) を作れません: ${r.reason}`);
     return r.data;
   }
   return x.data();
@@ -668,7 +670,7 @@ panel.addEventListener('click', async (e) => {
     const model3d = new Map();
     for (const x of wf.exports.filter((e) => e.kernel)) {
       const data = await exportData(x);
-      if (data == null) return setError('3D モデル (STEP) を作れないため、納品パッケージを作成できません。 ページを読み込み直してください');
+      if (data == null) { setError(`${$('error').textContent || '3D モデルを作れません'} → 納品パッケージは作成しませんでした`); return; } // 版の確定 (改訂履歴への記録) の前に止める
       model3d.set(x.id, data);
     }
     const d = delivered();
