@@ -5,14 +5,28 @@
 
 ## ビルド
 
-`dist/index.html` は `src/` とライブラリ(`package.json` でバージョン固定)から `build.py` で組み立てます(単一ファイル、約 1.1 MB)。`dist/` は Git 管理外です。
+`build.py` が、同じソースと同じ計算エンジンから、配布物を 2 通り作ります(`dist/`、`dist-offline/` は Git 管理外)。
 
 ```bash
-npm ci                # js-yaml 4.1.0 / three r149 / @jscad/modeling 2.12.3 / playwright を取得
-python3 build.py      # dist/index.html, dist/LICENSE, dist/THIRD_PARTY_LICENSES を生成
+npm ci                # js-yaml / three / @jscad/modeling / replicad / replicad-opencascadejs / playwright を取得
+python3 build.py
 ```
 
-生成した `dist/index.html` はダブルクリックでそのまま開けます(ネット接続は不要)。
+| 出力 | 用途 | 構成 |
+|---|---|---|
+| `dist/` | GitHub Pages | `index.html`(約 1.1 MB)+ `kernel/`(`occt.wasm.gz` 約 6.9 MB、`occt.js`、`replicad.js`)+ `text-cad-offline.zip` |
+| `dist-offline/` | フォルダ配布(オフライン)| `index.html` + `kernel-data.js`(約 10 MB)の 2 ファイル。ダブルクリックで開ける。ネット接続は不要 |
+
+`text-cad-offline.zip` は `dist-offline/` の内容を固めたもので、Pages の「情報」からダウンロードできます。
+
+## 計算エンジン
+
+形状計算は OpenCascade(WebAssembly)+ replicad で行い、**Web Worker** で動かします。
+WASM は外部 CDN を使わず、必ず同梱します(Web 版は `kernel/` を、オフライン版は `kernel-data.js` を読む)。
+読み込み中(数秒)も YAML は編集でき、画面右上に「計算エンジン: 読み込み中 NN%」→「準備完了」と表示します。
+`file://` で開く Web 版では `fetch` が使えないため、計算エンジンは読み込まれません(案内を出します。旧実装で動作は続きます)。
+
+起動用 JavaScript への補正は `patches/` に差分で残しています(WASM 本体は改変しません)。詳しくは `patches/README.md`。
 
 ## 公開 (GitHub Pages)
 
@@ -34,7 +48,7 @@ python3 build.py      # dist/index.html, dist/LICENSE, dist/THIRD_PARTY_LICENSES
 
 - Node.js(24 系)と、`npm ci` で入る `playwright`
 - Python 3.12 と `pip install -r tests/requirements.txt`(`cadquery-ocp`、`ifcopenshell`、`ezdxf`、`numpy`)。リポジトリ直下の `.venv` に作ると、`run_all.sh` が自動で使います
-- 先に `python3 build.py` で `dist/index.html` を作っておくこと
+- 先に `python3 build.py` で `dist/` と `dist-offline/` を作っておくこと
 
 ### 手元の環境構築 (macOS / Homebrew)
 
@@ -68,10 +82,10 @@ BROWSER=firefox bash tests/run_all.sh
 cd tests
 export CAD_OUT=/tmp/cad-out
 mkdir -p $CAD_OUT
-for t in test2 test5 test6 test7 test8 test9 test10 test11 test14 test15 test16 test17; do
+for t in test2 test5 test6 test7 test8 test9 test10 test11 test14 test15 test16 test17 test18; do
   node $t.js > $CAD_OUT/$t.log 2>&1; echo "$t: $(grep -c 'ERRORS \[\]' $CAD_OUT/$t.log)"   # 1 なら合格
 done
-for v in validate1 validate2 validate3 validate4; do
+for v in validate1 validate2 validate3 validate4 validate5; do
   python3 -I $v.py | tail -1                                                              # ALL OK: True なら合格
 done
 ```
@@ -97,6 +111,8 @@ done
 | validate1.py | test9 の STEP/STL を理論体積と照合 (STEP 有効性・体積・STL 水密) |
 | validate2.py | test14 の STEP/STL を理論体積と照合 |
 | validate3.py | test16 の STEP/STL を理論体積と照合 |
+| test18.js | 計算エンジンの読み込み(オフライン版 file://・Web 版 HTTP・読み込み中の編集・Web 版を file:// で開いた場合)と、Worker での計算 |
+| validate5.py | test18 が書き出したカーネル出力の STEP・STL を OpenCascade で読み直し、体積・表面積を理論式と照合 |
 | validate4.py | 納品 zip 内の DXF (audit)・STEP (有効性・体積)・IFC (要素数)・LICENSES.txt の同梱を検査 |
 
 ### 合格基準
