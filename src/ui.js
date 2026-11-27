@@ -256,11 +256,17 @@ const mkExports = (base, project, rules, drawing, extra, bom, scale3d) => [
 function buildMechWF(spec, scene) {
   const mech = parseMech(spec), project = parseProject(spec), solids = solidsOf(mech);
   const asm = mech.assembly || null;
+  // 部品の表示名 (検図の警告や STEP の部品名に使う): 組立は部品の title と配置の id、単品は案件の title
+  solids.forEach((o) => {
+    const ins = asm && asm.insts.find((i) => i.id === o.inst), def = ins && asm.defs.find((d) => d.key === ins.part);
+    o.partLabel = def ? `${def.title} (${o.inst})` : project.title || undefined;
+  });
   // 干渉は計算エンジンで調べる (非同期)。 求まるまでは state: 'pending' で、求まったら再描画する
   const ikey = interferenceKey(solids);
   const interference = interferenceFor(solids, () => { if (wf && wf.ikey === ikey) run(); });
   const revRows = revRowsOf(project);
   const secs = parseSections(spec, solids);
+  const onSection = () => { if (wf && wf.ikey === ikey) run(); };
   let drawings, bom = null, mechs;
   if (asm) {
     bom = buildBOM(asm);
@@ -275,7 +281,7 @@ function buildMechWF(spec, scene) {
     drawings = [{ key: 'main', label: '図面', suffix: '', d: buildDrawing(solids, project, revRows, { cuts: secs }) }];
     mechs = [mech];
   }
-  secs.forEach((sec) => drawings.push({ key: `sec${sec.label}`, label: `断面図 ${sec.label}-${sec.label}`, suffix: `_sec${sec.label}`, d: buildSectionDrawing(solids, project, revRows, sec, !!asm) }));
+  secs.forEach((sec) => drawings.push({ key: `sec${sec.label}`, label: `断面図 ${sec.label}-${sec.label}`, suffix: `_sec${sec.label}`, d: buildSectionDrawing(solids, project, revRows, sec, !!asm, sectionFor(solids, sec, onSection)) }));
   const rules = runChecks({ project, mechs, solids, interference, drawings, asmInfo: asm });
   const meshes = scene.kind === '3d' ? scene.meshes : build3dMech(spec).meshes;
   const hot = new Set();
@@ -309,7 +315,7 @@ function buildMechWF(spec, scene) {
       ...(bom ? [{ id: 'bom', label: '部品表 CSV', name: `${base}_bom.csv`, mime: 'text/csv', data: () => bomCSV(bom, project) }] : []),
     ], bom, false),
     zipDesc: `全図面の DXF / SVG(印刷してPDF化可) / 3D モデル STEP・STL${bom ? ' / 部品表 CSV' : ''} / 検図レポート / 案件ファイル(YAML) / 改訂履歴`,
-    readme: `- .dxf  : 図面 (用紙サイズ=1:1, 単位 mm / AutoCAD R12 形式)。組立の場合は _asm=組立図, _partN=部品図\n- .svg  : 図面 (ブラウザで開いて印刷→PDF保存できます)\n${bom ? '- _bom.csv : 部品表\n' : ''}- _model.step : 3D モデル (STEP AP214 / 他の CAD・CAM に取り込めます)\n- _model.stl : 3D モデル (メッシュ)\n- _inspection-report.md : 検図レポート\n- _project.yaml : 案件ファイル (再生成用)\n`,
+    readme: `- .dxf  : 図面 (用紙サイズ=1:1, 単位 mm / AutoCAD R12 形式)。組立の場合は _asm=組立図, _partN=部品図\n- .svg  : 図面 (ブラウザで開いて印刷→PDF保存できます)\n${bom ? '- _bom.csv : 部品表\n' : ''}- _model.step : 3D モデル (STEP (AP242 または AP214。案件の step_format) / 他の CAD・CAM に取り込めます)\n- _model.stl : 3D モデル (メッシュ)\n- _inspection-report.md : 検図レポート\n- _project.yaml : 案件ファイル (再生成用)\n`,
     revHint: '例: 穴径 φ8 → φ9',
   };
 }
@@ -755,6 +761,6 @@ window.__cad = {
   kernel: Kernel,
   run, goStep, kernelExport, interferenceFor, floatingParts,
   // 干渉の計算が終わるまで待つ (テスト用)
-  settled: async () => { for (let i = 0; i < 2000 && wf && wf.interference && wf.interference.state === 'pending'; i++) await new Promise((r) => setTimeout(r, 30)); }, kernelModelOf, get cur() { return cur; }, get wf() { return wf; }, store, toDXF, toSTL, makeZip,
-  parseMech, solidsOf, buildDrawing, sectionGroups, jscad: jscadModeling, build3dMech, conformPolys, buildScene, jsyaml,
+  settled: async () => { for (let i = 0; i < 2000 && wf && ((wf.interference && wf.interference.state === 'pending') || (wf.drawings && wf.drawings.some((x) => x.d.state === 'pending'))); i++) await new Promise((r) => setTimeout(r, 30)); }, kernelModelOf, get cur() { return cur; }, get wf() { return wf; }, store, toDXF, toSTL, makeZip,
+  parseMech, solidsOf, buildDrawing, sectionFor, buildSectionDrawing, collinearReduce, parseSections, jscad: jscadModeling, build3dMech, conformPolys, buildScene, jsyaml,
 };

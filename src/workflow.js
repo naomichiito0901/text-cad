@@ -637,6 +637,10 @@ function runChecks(ctx) {
     interference.state === 'pending' ? '計算エンジンで確認中です'
       : interference.state === 'unavailable' ? '計算エンジンが使えないため確認できません'
         : interference.hits.map((h) => `${h.a} × ${h.b} (${h.volume < 10 ? h.volume.toFixed(1) : Math.round(h.volume).toLocaleString('ja-JP')} mm³)`).join(' / '));
+  // 断面図は計算エンジンで作る。 できていない図面があるうちは検図を通さない (承認できない)
+  const secWait = drawings.filter((dw) => dw.d.state && dw.d.state !== 'done');
+  add('E06', '断面図が作成できている', 'error', !secWait.length,
+    secWait.map((dw) => `${dw.label}: ${dw.d.state === 'pending' ? '計算エンジンで作成中です' : '計算エンジンが使えないため作れません'}`).join(' / '));
   const nofit = drawings.filter((dw) => !dw.d.fits);
   add('E04', '図面が用紙に収まっている', 'error', !nofit.length, `${nofit.map((dw) => dw.label).join('、')}: 尺度 ${nofit[0] ? scaleText(nofit[0].d.scale) : ''} では ${P.paper} に収まりません。用紙か尺度を変更してください`);
   const nonStd = drawings.filter((dw) => !isStdScale(dw.d.scale));
