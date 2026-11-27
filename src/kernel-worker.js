@@ -26,9 +26,93 @@ async function gunzipIfNeeded(buf) {
 
 let R = null; // replicad
 
+// ---- 形状の生成 ----------------------------------------------------------------
+// main スレッドの kernelModelOf() が作った記述 (箱・円柱・穴・長穴) から、replicad の立体を作る。
+const M = 1; // 穴の工具を材料の外へはみ出させる量 (mm)
+
+// STEP は ASCII のみ。 日本語などの名前は \X2\....\X0\ に直す
+function stepAscii(text) {
+  let out = '', buf = '';
+  const flush = () => { if (buf) { out += `\\X2\\${buf}\\X0\\`; buf = ''; } };
+  for (const ch of text) {
+    const c = ch.codePointAt(0);
+    if (c < 0x80) { flush(); out += ch; } else if (c <= 0xffff) buf += c.toString(16).toUpperCase().padStart(4, '0'); else buf += '003F';
+  }
+  flush();
+  return out;
+}
+
+function dedupe(pts) {
+  return pts.filter((p, i) => i === 0 || Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) > 1e-9);
+}
+
+// 止まり・座ぐり・皿穴・貫通の穴: 断面 (半径, 高さ) を Z 軸まわりに回した工具
+function revCutter(h, zTop, zBot) {
+  const { pts, through } = h;
+  const P = [[0, zTop + M], [pts[0].r, zTop + M]];
+  pts.forEach((q) => P.push([q.r, q.z]));
+  const last = pts[pts.length - 1];
+  if (through) P.push([last.r, zBot - M], [0, zBot - M]); else P.push([0, last.z]);
+  const q = dedupe(P);
+  let pen = R.draw(q[0]);
+  for (let i = 1; i < q.length; i++) pen = pen.lineTo(q[i]);
+  return pen.close().sketchOnPlane('XZ').revolve([0, 0, 1]).translate(h.x, h.y, 0);
+}
+
+// 斜め穴: 上面の中心 (x,y) から下へ向かって dir の向きに angle 度傾く円柱
+function tiltCutter(t, zTop, zBot) {
+  const th = (t.angle * Math.PI) / 180, H = zTop - zBot, r = t.d / 2;
+  const L = H / Math.cos(th) + 2 * (r * Math.tan(th) + 2 * M);
+  const zc = (zTop + zBot) / 2, k = (zTop - zc) * Math.tan(th);
+  return R.drawCircle(r).sketchOnPlane('XY', -L / 2).extrude(L)
+    .rotate(t.angle, [0, 0, 0], [t.dir[1], -t.dir[0], 0])
+    .translate(t.x + t.dir[0] * k, t.y + t.dir[1] * k, zc);
+}
+
+function slotCutter(sl, zTop, zBot) {
+  // 向きが y のときも、x の形を 90 度回して作る (幅 = 半径の 2 倍の矩形を縦長で作ると、長さ 0 の辺ができて失敗する)
+  let d = R.drawRoundedRectangle(sl.len, sl.w, sl.w / 2);
+  if (sl.dir === 'y') d = d.rotate(90);
+  return d.sketchOnPlane('XY', zBot - M).extrude(zTop - zBot + 2 * M).translate(sl.cx, sl.cy, 0);
+}
+
+function makeSolid(m) {
+  let s;
+  if (m.kind === 'cyl') {
+    s = R.drawCircle(m.r).sketchOnPlane('XY', m.z0).extrude(m.z1 - m.z0).translate(m.cx, m.cy, 0);
+    const top = (e) => e.inPlane('XY', m.z1), bot = (e) => e.inPlane('XY', m.z0);
+    if (m.ft) s = s.fillet(m.ft, top);
+    else if (m.ct) s = s.chamfer(m.ct, top);
+    if (m.fb) s = s.fillet(m.fb, bot);
+    else if (m.cb) s = s.chamfer(m.cb, bot);
+    return s;
+  }
+  const w = m.x1 - m.x0, d = m.y1 - m.y0;
+  s = (m.cr ? R.drawRoundedRectangle(w, d, m.cr) : R.drawRectangle(w, d)).sketchOnPlane('XY', m.z0).extrude(m.z1 - m.z0).translate((m.x0 + m.x1) / 2, (m.y0 + m.y1) / 2, 0);
+  if (m.ct) s = s.chamfer(m.ct, (e) => e.inPlane('XY', m.z1));
+  if (m.cb) s = s.chamfer(m.cb, (e) => e.inPlane('XY', m.z0));
+  for (const h of m.holes) s = s.cut(h.rev ? revCutter(h.rev, m.z1, m.z0) : tiltCutter(h.tilt, m.z1, m.z0));
+  for (const sl of m.slots) s = s.cut(slotCutter(sl, m.z1, m.z0));
+  return s;
+}
+
+function isValid(shape) {
+  const oc = R.getOC();
+  return new oc.BRepCheck_Analyzer(shape.wrapped, true, false).IsValid();
+}
+
 // ---- 操作 (ops) ----------------------------------------------------------------
-// 基盤の段階では、計算エンジンの動作確認 (selfTest) だけを置く。 形状の生成は次の段階で追加する。
 const ops = {
+  // 立体の記述から STEP / STL と、立体ごとの体積・表面積・面の数・有効性を返す
+  async buildModel({ model }) {
+    const shapes = model.map((m) => ({ name: m.name, shape: makeSolid(m) }));
+    const solids = shapes.map(({ name, shape }) => ({
+      name, volume: R.measureVolume(shape), area: R.measureArea(shape), faces: shape.faces.length, valid: isValid(shape),
+    }));
+    const step = stepAscii(await R.exportSTEP(shapes.map(({ shape, name }) => ({ shape, name }))).text());
+    const stl = await R.compoundShapes(shapes.map((x) => x.shape)).blobSTL({ binary: false, tolerance: 0.01, angularTolerance: 0.1 }).text();
+    return { step, stl, solids };
+  },
   // 動作確認: 体積を理論値と比較できる 2 つの立体を作り、STEP / STL / 体積を返す
   async selfTest() {
     const out = {};
